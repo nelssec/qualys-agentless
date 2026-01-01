@@ -1,0 +1,83 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: qualys-k8s-scanner
+  labels:
+    app.kubernetes.io/name: qualys-k8s-scanner
+    app.kubernetes.io/component: security-scanner
+    app.kubernetes.io/version: "0.1.0"
+    app.kubernetes.io/managed-by: qualys
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - services
+      - serviceaccounts
+      - configmaps
+      - secrets
+      - nodes
+      - endpoints
+      - persistentvolumeclaims
+      - resourcequotas
+      - limitranges
+    verbs: ["get", "list"]
+
+  - apiGroups: ["apps"]
+    resources:
+      - deployments
+      - daemonsets
+      - statefulsets
+      - replicasets
+      - controllerrevisions
+    verbs: ["get", "list"]
+
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list"]
+
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources:
+      - roles
+      - clusterroles
+      - rolebindings
+      - clusterrolebindings
+    verbs: ["get", "list"]
+
+  - apiGroups: ["networking.k8s.io"]
+    resources:
+      - networkpolicies
+      - ingresses
+      - ingressclasses
+    verbs: ["get", "list"]
+
+  - apiGroups: ["policy"]
+    resources:
+      - podsecuritypolicies
+      - poddisruptionbudgets
+    verbs: ["get", "list"]
+
+  - apiGroups: ["autoscaling"]
+    resources:
+      - horizontalpodautoscalers
+    verbs: ["get", "list"]
+
+  - apiGroups: ["admissionregistration.k8s.io"]
+    resources:
+      - validatingwebhookconfigurations
+      - mutatingwebhookconfigurations
+    verbs: ["get", "list"]
+
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+    verbs: ["get", "list"]
+
+  - nonResourceURLs:
+      - /version
+      - /healthz
+      - /readyz
+      - /livez
+    verbs: ["get"]
