@@ -110,13 +110,14 @@ Secret values and ConfigMap values are never collected.
 ## Build
 
 ```bash
-make build              # Full build with Helm + managed K8s auth (~70MB)
-make build-nohelm       # Without Helm SDK (~58MB)
-make build-small        # Linux + UPX compression (~15MB)
-make build-minimal      # Kubeconfig-only, no Helm + UPX (~10MB)
-make build-aws-only     # EKS auth only
-make build-azure-only   # AKS auth only
-make build-gcp-only     # GKE auth only
+make build              # Local dev build (~70MB, native platform)
+make build-linux        # Full build + UPX compression (~13MB)
+make build-nohelm       # Without Helm SDK + UPX (~11MB)
+make build-minimal      # Kubeconfig-only + UPX (~10MB)
+make build-aws-only     # EKS auth only + UPX
+make build-azure-only   # AKS auth only + UPX
+make build-gcp-only     # GKE auth only + UPX
+make build-all          # Cross-compile all platforms
 ```
 
 The minimal build works with any Kubernetes cluster via kubeconfig. The cloud SDKs (AWS/Azure/GCP) are only needed for automatic credential fetching from managed services.

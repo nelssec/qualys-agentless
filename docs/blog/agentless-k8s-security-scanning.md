@@ -263,11 +263,13 @@ flowchart LR
 
 ## Build Options
 
+All Linux builds use UPX compression for minimal size:
+
 | Build | Size | Includes |
 |-------|------|----------|
-| Full | ~70MB | Helm + managed K8s auth |
-| No Helm | ~58MB | Managed K8s auth only |
-| Minimal | ~10MB | Kubeconfig auth only (UPX compressed) |
+| Full | ~13MB | Helm + managed K8s auth |
+| No Helm | ~11MB | Managed K8s auth only |
+| Minimal | ~10MB | Kubeconfig auth only |
 
 The minimal build works with any Kubernetes cluster. Managed K8s auth SDKs (AWS/Azure/GCP) are only for automatic credential fetching.
 

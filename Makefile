@@ -13,55 +13,77 @@ LDFLAGS := -s -w \
 BUILD_DIR := build
 CONTROLS_DIR := controls
 
-.PHONY: all build build-small build-minimal build-all clean test lint fmt deps help install docker docker-push upx
+.PHONY: all build build-linux build-nohelm build-minimal build-all clean test lint fmt deps help install docker docker-push
 
 all: build
 
+# Local build (native platform, no UPX - for development)
 build: deps
 	@mkdir -p $(BUILD_DIR)
-	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
 
-build-small: deps
+# Linux build with UPX compression (~13MB)
+build-linux: deps
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
 	@if command -v upx >/dev/null 2>&1; then \
 		upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; \
+	else \
+		echo "Warning: UPX not installed, binary not compressed"; \
 	fi
 
+# Linux build without Helm SDK + UPX (~11MB)
+build-nohelm: deps
+	@mkdir -p $(BUILD_DIR)
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "nohelm" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
+	@if command -v upx >/dev/null 2>&1; then \
+		upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; \
+	else \
+		echo "Warning: UPX not installed, binary not compressed"; \
+	fi
+
+# Minimal Linux build: kubeconfig-only + UPX (~10MB)
 build-minimal: deps
 	@mkdir -p $(BUILD_DIR)
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "nocloud,nohelm" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
 	@if command -v upx >/dev/null 2>&1; then \
 		upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; \
+	else \
+		echo "Warning: UPX not installed, binary not compressed"; \
 	fi
 
-build-nohelm: deps
-	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "nohelm" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
-
+# Single cloud provider builds (with UPX)
 build-aws-only: deps
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "noazure,nogcp" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "noazure,nogcp" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
+	@if command -v upx >/dev/null 2>&1; then upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; fi
 
 build-azure-only: deps
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "noaws,nogcp" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "noaws,nogcp" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
+	@if command -v upx >/dev/null 2>&1; then upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; fi
 
 build-gcp-only: deps
 	@mkdir -p $(BUILD_DIR)
-	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "noaws,noazure" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "noaws,noazure" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
+	@if command -v upx >/dev/null 2>&1; then upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; fi
 
+# Cross-compile for all platforms (UPX for Linux only)
 build-all: deps
 	@mkdir -p $(BUILD_DIR)
+	@echo "Building linux/amd64..."
 	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
+	@echo "Building linux/arm64..."
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64 ./cmd/qualys-k8s
+	@echo "Building darwin/amd64..."
 	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-amd64 ./cmd/qualys-k8s
+	@echo "Building darwin/arm64..."
 	GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-darwin-arm64 ./cmd/qualys-k8s
+	@echo "Building windows/amd64..."
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-windows-amd64.exe ./cmd/qualys-k8s
-
-upx:
 	@if command -v upx >/dev/null 2>&1; then \
-		for f in $(BUILD_DIR)/$(BINARY_NAME)-linux-*; do upx --best --lzma "$$f" 2>/dev/null || true; done; \
+		echo "Compressing Linux binaries with UPX..."; \
+		upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 $(BUILD_DIR)/$(BINARY_NAME)-linux-arm64; \
 	fi
 
 install: build
@@ -112,16 +134,15 @@ help:
 	@echo ""
 	@echo "Supports: EKS, AKS, GKE, OpenShift, Rancher, k3s, k0s, on-prem, any K8s"
 	@echo ""
-	@echo "Build targets:"
-	@echo "  build           Full build with Helm + managed K8s auth (~70MB)"
-	@echo "  build-nohelm    Without Helm SDK (~58MB)"
-	@echo "  build-small     Linux amd64 + UPX compression (~15MB)"
-	@echo "  build-minimal   Kubeconfig-only auth, no Helm + UPX (~10MB)"
-	@echo "  build-aws-only  EKS auth only (no Azure/GCP SDKs)"
-	@echo "  build-azure-only AKS auth only (no AWS/GCP SDKs)"
-	@echo "  build-gcp-only  GKE auth only (no AWS/Azure SDKs)"
-	@echo "  build-all       Cross-compile for all platforms"
-	@echo "  upx             Compress Linux binaries with UPX"
+	@echo "Build targets (all Linux builds use UPX compression):"
+	@echo "  build           Local dev build, native platform (~70MB)"
+	@echo "  build-linux     Full build, Linux amd64 + UPX (~13MB)"
+	@echo "  build-nohelm    Without Helm SDK + UPX (~11MB)"
+	@echo "  build-minimal   Kubeconfig-only, no Helm/cloud SDKs + UPX (~10MB)"
+	@echo "  build-aws-only  EKS auth only + UPX"
+	@echo "  build-azure-only AKS auth only + UPX"
+	@echo "  build-gcp-only  GKE auth only + UPX"
+	@echo "  build-all       Cross-compile all platforms (UPX on Linux)"
 	@echo ""
 	@echo "Other targets:"
 	@echo "  test            Run tests"
