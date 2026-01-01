@@ -83,12 +83,7 @@ func (l *ControlLoader) LoadControls(ctx context.Context, engine *Engine, framew
 
 // loadEmbeddedControls loads controls from embedded files.
 func (l *ControlLoader) loadEmbeddedControls(engine *Engine, frameworks []string) error {
-	// Register built-in frameworks
-	l.registerBuiltinFrameworks(engine)
-
-	// Register built-in controls
-	l.registerBuiltinControls(engine)
-
+	engine.RegisterDefaultControls()
 	return nil
 }
 
@@ -338,10 +333,4 @@ func parseRegoControl(path, content string) (*Control, *rego.PreparedEvalQuery, 
 	}
 
 	return ctrl, &preparedQuery, nil
-}
-
-func (l *ControlLoader) registerBuiltinFrameworks(engine *Engine) {
-}
-
-func (l *ControlLoader) registerBuiltinControls(engine *Engine) {
 }

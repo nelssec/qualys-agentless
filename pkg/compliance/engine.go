@@ -6,12 +6,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/open-policy-agent/opa/rego"
 	"github.com/nelssec/qualys-agentless/pkg/inventory"
+	"github.com/open-policy-agent/opa/rego"
 )
 
 // Engine evaluates compliance policies using OPA/Rego.
@@ -167,14 +168,16 @@ func (e *Engine) LoadPoliciesFromDir(dir string) error {
 			return nil
 		}
 
-		ext := filepath.Ext(path)
-		if ext == ".rego" {
-			// Read and load the rego file
-			// Note: Implementation would use os.ReadFile
+		if filepath.Ext(path) != ".rego" {
 			return nil
 		}
 
-		return nil
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("failed to read %s: %w", path, err)
+		}
+
+		return e.loadRegoPolicy(path, string(content))
 	})
 }
 

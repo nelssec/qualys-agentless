@@ -30,10 +30,14 @@ build-small: deps
 
 build-minimal: deps
 	@mkdir -p $(BUILD_DIR)
-	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "nocloud" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
+	GOOS=linux GOARCH=amd64 CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "nocloud,nohelm" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64 ./cmd/qualys-k8s
 	@if command -v upx >/dev/null 2>&1; then \
 		upx --best --lzma $(BUILD_DIR)/$(BINARY_NAME)-linux-amd64; \
 	fi
+
+build-nohelm: deps
+	@mkdir -p $(BUILD_DIR)
+	CGO_ENABLED=0 $(GO) build $(GOFLAGS) -tags "nohelm" -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/qualys-k8s
 
 build-aws-only: deps
 	@mkdir -p $(BUILD_DIR)
@@ -106,13 +110,16 @@ clean:
 help:
 	@echo "qualys-k8s - Agentless Kubernetes Security Scanner"
 	@echo ""
+	@echo "Supports: EKS, AKS, GKE, OpenShift, Rancher, k3s, k0s, on-prem, any K8s"
+	@echo ""
 	@echo "Build targets:"
-	@echo "  build           Full build for current platform (~58MB)"
-	@echo "  build-small     Linux amd64 + UPX compression (~11MB)"
-	@echo "  build-minimal   Linux amd64, no cloud SDKs + UPX (~10MB)"
-	@echo "  build-aws-only  AWS/EKS only"
-	@echo "  build-azure-only Azure/AKS only"
-	@echo "  build-gcp-only  GCP/GKE only"
+	@echo "  build           Full build with Helm + managed K8s auth (~70MB)"
+	@echo "  build-nohelm    Without Helm SDK (~58MB)"
+	@echo "  build-small     Linux amd64 + UPX compression (~15MB)"
+	@echo "  build-minimal   Kubeconfig-only auth, no Helm + UPX (~10MB)"
+	@echo "  build-aws-only  EKS auth only (no Azure/GCP SDKs)"
+	@echo "  build-azure-only AKS auth only (no AWS/GCP SDKs)"
+	@echo "  build-gcp-only  GKE auth only (no AWS/Azure SDKs)"
 	@echo "  build-all       Cross-compile for all platforms"
 	@echo "  upx             Compress Linux binaries with UPX"
 	@echo ""

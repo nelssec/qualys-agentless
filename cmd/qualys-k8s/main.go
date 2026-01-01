@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -14,6 +15,9 @@ import (
 	"github.com/nelssec/qualys-agentless/pkg/compliance/policies"
 	"github.com/nelssec/qualys-agentless/pkg/config"
 	"github.com/nelssec/qualys-agentless/pkg/daemon"
+	"github.com/nelssec/qualys-agentless/pkg/helm"
+	"github.com/nelssec/qualys-agentless/pkg/inventory"
+	"github.com/nelssec/qualys-agentless/pkg/manifest"
 	"github.com/nelssec/qualys-agentless/pkg/output"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/rest"
@@ -32,6 +36,8 @@ func main() {
 	}
 
 	rootCmd.AddCommand(newScanCmd())
+	rootCmd.AddCommand(newScanManifestCmd())
+	rootCmd.AddCommand(newScanHelmCmd())
 	rootCmd.AddCommand(newInventoryCmd())
 	rootCmd.AddCommand(newDaemonCmd())
 	rootCmd.AddCommand(newFrameworksCmd())
@@ -45,20 +51,22 @@ func main() {
 
 func newScanCmd() *cobra.Command {
 	var (
-		kubeconfig    string
-		provider      string
-		region        string
-		allClusters   bool
-		cluster       string
-		subscription  string
-		project       string
-		qualysURL     string
-		outputFormat  string
-		outputFile    string
-		frameworks    []string
-		namespaces    []string
-		excludeNS     []string
-		configFile    string
+		kubeconfig          string
+		provider            string
+		region              string
+		allClusters         bool
+		cluster             string
+		subscription        string
+		project             string
+		qualysURL           string
+		outputFormat        string
+		outputFile          string
+		frameworks          []string
+		namespaces          []string
+		excludeNS           []string
+		configFile          string
+		complianceThreshold float64
+		severityThreshold   string
 	)
 
 	cmd := &cobra.Command{
@@ -66,20 +74,22 @@ func newScanCmd() *cobra.Command {
 		Short: "Scan Kubernetes clusters for security compliance",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runScan(scanOptions{
-				kubeconfig:   kubeconfig,
-				provider:     provider,
-				region:       region,
-				allClusters:  allClusters,
-				cluster:      cluster,
-				subscription: subscription,
-				project:      project,
-				qualysURL:    qualysURL,
-				outputFormat: outputFormat,
-				outputFile:   outputFile,
-				frameworks:   frameworks,
-				namespaces:   namespaces,
-				excludeNS:    excludeNS,
-				configFile:   configFile,
+				kubeconfig:          kubeconfig,
+				provider:            provider,
+				region:              region,
+				allClusters:         allClusters,
+				cluster:             cluster,
+				subscription:        subscription,
+				project:             project,
+				qualysURL:           qualysURL,
+				outputFormat:        outputFormat,
+				outputFile:          outputFile,
+				frameworks:          frameworks,
+				namespaces:          namespaces,
+				excludeNS:           excludeNS,
+				configFile:          configFile,
+				complianceThreshold: complianceThreshold,
+				severityThreshold:   severityThreshold,
 			})
 		},
 	}
@@ -92,31 +102,35 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&subscription, "subscription", "", "Azure subscription ID")
 	cmd.Flags().StringVar(&project, "project", "", "GCP project ID")
 	cmd.Flags().StringVar(&qualysURL, "qualys-api-url", "", "Qualys API URL")
-	cmd.Flags().StringVar(&outputFormat, "output", "console", "Output format: console, json, sarif")
+	cmd.Flags().StringVar(&outputFormat, "output", "console", "Output format: console, json, sarif, junit")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
 	cmd.Flags().StringSliceVar(&frameworks, "frameworks", []string{"cis-k8s-1.11"}, "Frameworks to evaluate")
 	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to scan")
 	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public"}, "Namespaces to exclude")
 	cmd.Flags().StringVar(&configFile, "config", "", "Config file path")
+	cmd.Flags().Float64Var(&complianceThreshold, "compliance-threshold", 0, "Minimum compliance score (0-100), exit 1 if below")
+	cmd.Flags().StringVar(&severityThreshold, "severity-threshold", "", "Fail if findings at or above severity (low, medium, high, critical)")
 
 	return cmd
 }
 
 type scanOptions struct {
-	kubeconfig   string
-	provider     string
-	region       string
-	allClusters  bool
-	cluster      string
-	subscription string
-	project      string
-	qualysURL    string
-	outputFormat string
-	outputFile   string
-	frameworks   []string
-	namespaces   []string
-	excludeNS    []string
-	configFile   string
+	kubeconfig          string
+	provider            string
+	region              string
+	allClusters         bool
+	cluster             string
+	subscription        string
+	project             string
+	qualysURL           string
+	outputFormat        string
+	outputFile          string
+	frameworks          []string
+	namespaces          []string
+	excludeNS           []string
+	configFile          string
+	complianceThreshold float64
+	severityThreshold   string
 }
 
 func runScan(opts scanOptions) error {
@@ -223,7 +237,45 @@ func runScan(opts scanOptions) error {
 			result.TotalChecks, result.PassedChecks, result.FailedChecks)
 	}
 
-	return outputResults(allResults, opts.outputFormat, opts.outputFile)
+	if err := outputResults(allResults, opts.outputFormat, opts.outputFile); err != nil {
+		return err
+	}
+
+	return checkThresholds(allResults, opts.complianceThreshold, opts.severityThreshold)
+}
+
+func checkThresholds(results []*compliance.ScanResult, complianceThreshold float64, severityThreshold string) error {
+	if complianceThreshold > 0 {
+		for _, result := range results {
+			if result.Summary.ComplianceScore < complianceThreshold {
+				return fmt.Errorf("compliance score %.1f%% is below threshold %.1f%%",
+					result.Summary.ComplianceScore, complianceThreshold)
+			}
+		}
+	}
+
+	if severityThreshold != "" {
+		sevOrder := map[string]int{"low": 1, "medium": 2, "high": 3, "critical": 4}
+		threshold, ok := sevOrder[strings.ToLower(severityThreshold)]
+		if !ok {
+			return fmt.Errorf("invalid severity threshold: %s (use low, medium, high, critical)", severityThreshold)
+		}
+
+		for _, result := range results {
+			for _, finding := range result.Findings {
+				if finding.Status != compliance.StatusFail {
+					continue
+				}
+				findingSev := sevOrder[strings.ToLower(string(finding.Severity))]
+				if findingSev >= threshold {
+					return fmt.Errorf("found %s severity finding: %s",
+						finding.Severity, finding.ControlID)
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 func outputResults(results []*compliance.ScanResult, format, file string) error {
@@ -234,6 +286,8 @@ func outputResults(results []*compliance.ScanResult, format, file string) error 
 		out = output.NewJSONFormatter()
 	case "sarif":
 		out = output.NewSARIFFormatter()
+	case "junit":
+		out = output.NewJUnitFormatter()
 	default:
 		out = output.NewConsoleFormatter()
 	}
@@ -249,6 +303,142 @@ func outputResults(results []*compliance.ScanResult, format, file string) error 
 
 	fmt.Print(string(data))
 	return nil
+}
+
+func newScanManifestCmd() *cobra.Command {
+	var (
+		outputFormat string
+		outputFile   string
+		frameworks   []string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "scan-manifest [file or directory]",
+		Short: "Scan YAML manifests for security issues",
+		Long:  "Scan Kubernetes YAML manifests before deployment (shift-left security)",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			parser := manifest.NewParser()
+
+			var inv *inventory.ClusterInventory
+			var err error
+
+			path := args[0]
+			info, err := os.Stat(path)
+			if err != nil {
+				return fmt.Errorf("cannot access %s: %w", path, err)
+			}
+
+			if info.IsDir() {
+				inv, err = parser.ParseDirectory(path)
+			} else {
+				inv, err = parser.ParseFile(path)
+			}
+			if err != nil {
+				return fmt.Errorf("failed to parse manifests: %w", err)
+			}
+
+			engine := compliance.NewEngine()
+			engine.RegisterDefaultControls()
+
+			if err := engine.LoadEmbeddedPolicies(policies.Policies, "."); err != nil {
+				fmt.Printf("Warning: failed to load some policies: %v\n", err)
+			}
+
+			if len(frameworks) == 0 {
+				frameworks = []string{"cis-k8s-1.11"}
+			}
+
+			result, err := engine.Evaluate(context.Background(), inv, frameworks)
+			if err != nil {
+				return fmt.Errorf("failed to evaluate policies: %w", err)
+			}
+
+			result.ClusterName = path
+
+			results := []*compliance.ScanResult{result}
+			return outputResults(results, outputFormat, outputFile)
+		},
+	}
+
+	cmd.Flags().StringVar(&outputFormat, "output", "console", "Output format: console, json, sarif, junit")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
+	cmd.Flags().StringSliceVar(&frameworks, "frameworks", []string{"cis-k8s-1.11"}, "Frameworks to evaluate")
+
+	return cmd
+}
+
+func newScanHelmCmd() *cobra.Command {
+	var (
+		outputFormat string
+		outputFile   string
+		frameworks   []string
+		valueFiles   []string
+		setValues    []string
+		releaseName  string
+		namespace    string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "scan-helm [chart]",
+		Short: "Scan Helm charts for security issues",
+		Long:  "Scan Helm charts before deployment (shift-left security). Supports local charts, .tgz archives, and OCI registries.",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			chartPath := args[0]
+
+			renderer := helm.NewRenderer()
+			opts := helm.RenderOptions{
+				ReleaseName: releaseName,
+				Namespace:   namespace,
+				ValueFiles:  valueFiles,
+				Values:      setValues,
+			}
+
+			fmt.Printf("Rendering Helm chart: %s\n", chartPath)
+
+			inv, err := renderer.RenderChart(chartPath, opts)
+			if err != nil {
+				return fmt.Errorf("failed to render chart: %w", err)
+			}
+
+			fmt.Printf("Parsed: %d pods, %d deployments, %d roles\n",
+				len(inv.Workloads.Pods),
+				len(inv.Workloads.Deployments),
+				len(inv.RBAC.Roles)+len(inv.RBAC.ClusterRoles))
+
+			engine := compliance.NewEngine()
+			engine.RegisterDefaultControls()
+
+			if err := engine.LoadEmbeddedPolicies(policies.Policies, "."); err != nil {
+				fmt.Printf("Warning: failed to load some policies: %v\n", err)
+			}
+
+			if len(frameworks) == 0 {
+				frameworks = []string{"cis-k8s-1.11"}
+			}
+
+			result, err := engine.Evaluate(context.Background(), inv, frameworks)
+			if err != nil {
+				return fmt.Errorf("failed to evaluate policies: %w", err)
+			}
+
+			result.ClusterName = chartPath
+
+			results := []*compliance.ScanResult{result}
+			return outputResults(results, outputFormat, outputFile)
+		},
+	}
+
+	cmd.Flags().StringVar(&outputFormat, "output", "console", "Output format: console, json, sarif, junit")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
+	cmd.Flags().StringSliceVar(&frameworks, "frameworks", []string{"cis-k8s-1.11"}, "Frameworks to evaluate")
+	cmd.Flags().StringSliceVarP(&valueFiles, "values", "f", nil, "Values files to use (can specify multiple)")
+	cmd.Flags().StringSliceVar(&setValues, "set", nil, "Set values on the command line (key=value)")
+	cmd.Flags().StringVar(&releaseName, "release-name", "release", "Release name for rendering")
+	cmd.Flags().StringVarP(&namespace, "namespace", "n", "default", "Namespace for rendering")
+
+	return cmd
 }
 
 func newInventoryCmd() *cobra.Command {

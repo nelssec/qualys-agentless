@@ -155,15 +155,3 @@ func (d *Daemon) scanCluster(ctx context.Context, name string, restConfig *rest.
 
 	return result, nil
 }
-
-type Scheduler struct {
-	daemon   *Daemon
-	schedule string
-}
-
-func NewScheduler(d *Daemon, schedule string) *Scheduler {
-	return &Scheduler{
-		daemon:   d,
-		schedule: schedule,
-	}
-}

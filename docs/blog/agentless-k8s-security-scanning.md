@@ -29,9 +29,88 @@ flowchart LR
 
 The scanner makes read-only API calls to collect inventory, then evaluates against security policies locally.
 
+## Supported Platforms
+
+Works with any Kubernetes distribution:
+
+| Platform | Authentication |
+|----------|----------------|
+| Any K8s | kubeconfig |
+| OpenShift | oc login / kubeconfig |
+| Rancher | Rancher UI kubeconfig |
+| k3s | /etc/rancher/k3s/k3s.yaml |
+| k0s | k0s kubeconfig |
+| MicroK8s | microk8s config |
+| Kind/Minikube | Local kubeconfig |
+| AWS EKS | IAM / IRSA |
+| Azure AKS | Azure AD / Workload Identity |
+| GCP GKE | GCP IAM / Workload Identity |
+
+## Shift-Left Scanning
+
+Security checks run before deployment:
+
+```mermaid
+flowchart LR
+    subgraph Development
+        YAML[YAML Manifests]
+        HELM[Helm Charts]
+    end
+
+    subgraph Scanner
+        PARSE[Parse]
+        EVAL[Evaluate]
+    end
+
+    subgraph Output
+        CONSOLE[Console]
+        SARIF[SARIF]
+        JUNIT[JUnit]
+    end
+
+    YAML --> PARSE
+    HELM --> PARSE
+    PARSE --> EVAL
+    EVAL --> CONSOLE
+    EVAL --> SARIF
+    EVAL --> JUNIT
+```
+
+Scan manifests and Helm charts in CI/CD pipelines:
+
+```bash
+# YAML manifests
+qualys-k8s scan-manifest deployment.yaml
+qualys-k8s scan-manifest ./manifests/
+
+# Helm charts
+qualys-k8s scan-helm ./my-chart
+qualys-k8s scan-helm ./my-chart -f values-prod.yaml
+
+# CI/CD thresholds
+qualys-k8s scan-manifest ./manifests --compliance-threshold 80
+qualys-k8s scan-helm ./chart --severity-threshold high --output junit
+```
+
 ## Authentication
 
 All authentication uses short-lived tokens.
+
+### Kubeconfig (Any Cluster)
+
+```mermaid
+sequenceDiagram
+    participant S as Scanner
+    participant K as Kubeconfig
+    participant API as K8s API
+
+    S->>K: Read credentials
+    K-->>S: Token/cert
+    S->>API: API request
+    API-->>S: Resources
+```
+
+Works with OpenShift, Rancher, k3s, on-prem, or any Kubernetes cluster.
 
 ### AWS EKS
 
@@ -49,7 +128,7 @@ sequenceDiagram
     EKS-->>S: Resources
 ```
 
-Uses the same token mechanism as aws-iam-authenticator. Creates a presigned STS GetCallerIdentity request encoded as a Kubernetes bearer token.
+Uses the same token mechanism as aws-iam-authenticator.
 
 ### Azure AKS
 
@@ -123,13 +202,16 @@ deny[result] {
 
 ### Frameworks
 
-- CIS Kubernetes Benchmark v1.10.0, v1.11.0
-- CIS EKS Benchmark v1.6.0
-- CIS AKS Benchmark v1.6.0
-- CIS OpenShift Benchmark v1.7.0
-- Kubernetes/EKS/AKS/OpenShift Best Practices
-- NSA/CISA Kubernetes Hardening Guide
-- MITRE ATT&CK for Kubernetes
+| Framework | Coverage |
+|-----------|----------|
+| CIS Kubernetes v1.10, v1.11 | 32 controls (Section 5) |
+| CIS EKS v1.6 | 35 controls |
+| CIS AKS v1.6 | 28 controls |
+| CIS OpenShift v1.7 | 23 controls |
+| Kubernetes Best Practices | 60 controls |
+| EKS/AKS/OpenShift Best Practices | 56+ controls each |
+| NSA/CISA Hardening | 15 controls |
+| MITRE ATT&CK | 15 controls |
 
 ## RBAC
 
@@ -157,7 +239,7 @@ flowchart TB
     style EXEC fill:#FFB6C1
 ```
 
-## Deployment
+## Deployment Options
 
 ```mermaid
 flowchart LR
@@ -166,7 +248,8 @@ flowchart LR
     end
 
     subgraph CICD
-        PIPELINE[Pipeline] --> CLUSTER2[Staging]
+        PIPELINE[Pipeline] --> MANIFESTS[Manifests/Helm]
+        PIPELINE --> CLUSTER2[Staging]
     end
 
     subgraph Daemon
@@ -174,9 +257,19 @@ flowchart LR
     end
 ```
 
-1. CLI: On-demand scans
-2. CI/CD: Pre-deployment checks
-3. Daemon: Scheduled scanning
+1. CLI: On-demand scans from workstation
+2. CI/CD: Pre-deployment manifest/Helm checks + staging scans
+3. Daemon: Scheduled production scanning
+
+## Build Options
+
+| Build | Size | Includes |
+|-------|------|----------|
+| Full | ~70MB | Helm + managed K8s auth |
+| No Helm | ~58MB | Managed K8s auth only |
+| Minimal | ~10MB | Kubeconfig auth only (UPX compressed) |
+
+The minimal build works with any Kubernetes cluster. Managed K8s auth SDKs (AWS/Azure/GCP) are only for automatic credential fetching.
 
 ## Security Controls
 
@@ -185,5 +278,7 @@ flowchart LR
 | Zero credential storage | IAM roles, Workload Identity |
 | Read-only access | get/list verbs only |
 | Minimal data collection | No secret values |
-| Network encryption | TLS 1.2+ |
+| Network encryption | TLS 1.2+ required |
 | Credentials | Environment variables only |
+| Response size limits | 50MB max |
+| No redirects | Disabled for security |

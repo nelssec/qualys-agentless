@@ -3,6 +3,7 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"encoding/xml"
 	"fmt"
 	"strings"
 
@@ -220,4 +221,94 @@ func severityToSARIF(s compliance.Severity) string {
 	default:
 		return "note"
 	}
+}
+
+type JUnitFormatter struct{}
+
+func NewJUnitFormatter() *JUnitFormatter {
+	return &JUnitFormatter{}
+}
+
+type junitTestSuites struct {
+	XMLName    string           `xml:"testsuites"`
+	Tests      int              `xml:"tests,attr"`
+	Failures   int              `xml:"failures,attr"`
+	Time       float64          `xml:"time,attr"`
+	TestSuites []junitTestSuite `xml:"testsuite"`
+}
+
+type junitTestSuite struct {
+	Name      string          `xml:"name,attr"`
+	Tests     int             `xml:"tests,attr"`
+	Failures  int             `xml:"failures,attr"`
+	Errors    int             `xml:"errors,attr"`
+	Time      float64         `xml:"time,attr"`
+	TestCases []junitTestCase `xml:"testcase"`
+}
+
+type junitTestCase struct {
+	Name      string        `xml:"name,attr"`
+	ClassName string        `xml:"classname,attr"`
+	Time      float64       `xml:"time,attr"`
+	Failure   *junitFailure `xml:"failure,omitempty"`
+}
+
+type junitFailure struct {
+	Message string `xml:"message,attr"`
+	Type    string `xml:"type,attr"`
+	Content string `xml:",chardata"`
+}
+
+func (f *JUnitFormatter) Format(results []*compliance.ScanResult) ([]byte, error) {
+	suites := junitTestSuites{
+		TestSuites: make([]junitTestSuite, 0),
+	}
+
+	for _, result := range results {
+		suite := junitTestSuite{
+			Name:      result.ClusterName,
+			Tests:     result.TotalChecks,
+			Failures:  result.FailedChecks,
+			Errors:    0,
+			Time:      0,
+			TestCases: make([]junitTestCase, 0),
+		}
+
+		for _, finding := range result.Findings {
+			tc := junitTestCase{
+				Name:      finding.ControlID + ": " + finding.ControlName,
+				ClassName: finding.Framework,
+				Time:      0,
+			}
+
+			if finding.Status == compliance.StatusFail {
+				resource := ""
+				if finding.Resource.Name != "" {
+					resource = fmt.Sprintf("%s/%s in %s", finding.Resource.Kind, finding.Resource.Name, finding.Resource.Namespace)
+				}
+				tc.Failure = &junitFailure{
+					Message: finding.Message,
+					Type:    string(finding.Severity),
+					Content: fmt.Sprintf("Resource: %s\nRemediation: %s", resource, finding.Remediation),
+				}
+			}
+
+			suite.TestCases = append(suite.TestCases, tc)
+		}
+
+		suites.Tests += suite.Tests
+		suites.Failures += suite.Failures
+		suites.TestSuites = append(suites.TestSuites, suite)
+	}
+
+	var buf bytes.Buffer
+	buf.WriteString(`<?xml version="1.0" encoding="UTF-8"?>` + "\n")
+
+	encoder := xml.NewEncoder(&buf)
+	encoder.Indent("", "  ")
+	if err := encoder.Encode(suites); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
 }

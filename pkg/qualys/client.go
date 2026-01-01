@@ -3,6 +3,7 @@ package qualys
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,9 +27,10 @@ var (
 )
 
 const (
-	DefaultTimeout = 30 * time.Second
-	APIVersion     = "v1.3"
-	UserAgent      = "qualys-k8s-agentless/0.1.0"
+	DefaultTimeout     = 30 * time.Second
+	APIVersion         = "v1.3"
+	UserAgent          = "qualys-k8s-agentless/0.1.0"
+	MaxResponseSize    = 50 * 1024 * 1024
 )
 
 type Client struct {
@@ -91,6 +93,14 @@ func NewClient(baseURL string, auth AuthConfig, opts ...ClientOption) *Client {
 		auth:    auth,
 		httpClient: &http.Client{
 			Timeout: DefaultTimeout,
+			Transport: &http.Transport{
+				TLSClientConfig: &tls.Config{
+					MinVersion: tls.VersionTLS12,
+				},
+			},
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 
@@ -160,7 +170,7 @@ func (c *Client) request(ctx context.Context, method, path string, body interfac
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, MaxResponseSize))
 	if err != nil {
 		return fmt.Errorf("failed to read response: %w", err)
 	}

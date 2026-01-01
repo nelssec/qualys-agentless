@@ -2,10 +2,6 @@ package inventory
 
 import (
 	"time"
-
-	corev1 "k8s.io/api/core/v1"
-	networkingv1 "k8s.io/api/networking/v1"
-	rbacv1 "k8s.io/api/rbac/v1"
 )
 
 // ClusterInventory contains all collected resources from a Kubernetes cluster.
@@ -82,6 +78,7 @@ type PodInfo struct {
 	Volumes        []VolumeInfo          `json:"volumes,omitempty"`
 	Phase          string                `json:"phase"`
 	AutomountSAToken *bool               `json:"automountServiceAccountToken,omitempty"`
+	Source         string                `json:"source,omitempty"`
 }
 
 // PodSecurityContext contains pod-level security settings.
@@ -575,10 +572,3 @@ type EndpointSubset struct {
 	NotReadyAddresses int      `json:"notReadyAddresses"`
 	Ports             []string `json:"ports,omitempty"`
 }
-
-// Keep these for type checking
-var (
-	_ = corev1.Pod{}
-	_ = networkingv1.NetworkPolicy{}
-	_ = rbacv1.Role{}
-)
