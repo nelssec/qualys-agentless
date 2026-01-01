@@ -1,0 +1,7 @@
+qualys-k8s
+qualys-k8s-*
+build/
+*.exe
+coverage.out
+coverage.html
+.DS_Store
