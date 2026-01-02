@@ -157,15 +157,82 @@ func runScan(opts scanOptions) error {
 
 	fmt.Println("Starting Kubernetes security scan...")
 
-	var restConfig interface{}
+	var restConfig *rest.Config
 	var clusters []auth.ClusterInfo
 
-	if opts.kubeconfig != "" || opts.provider == "" || opts.provider == "kubeconfig" {
+	switch opts.provider {
+	case "aws":
+		if !auth.HasCloudProvider("aws") {
+			return fmt.Errorf("AWS provider not available (built without AWS support)")
+		}
+		if opts.cluster == "" {
+			return fmt.Errorf("--cluster is required for AWS provider")
+		}
+		if opts.region == "" {
+			return fmt.Errorf("--region is required for AWS provider")
+		}
+		provider, err := auth.NewEKSProvider(ctx, auth.EKSProviderOptions{
+			Region: opts.region,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create EKS provider: %w", err)
+		}
+		cfg, err := provider.GetRestConfig(ctx, opts.cluster)
+		if err != nil {
+			return fmt.Errorf("failed to get EKS cluster config: %w", err)
+		}
+		restConfig = cfg
+		clusters = append(clusters, auth.ClusterInfo{Name: opts.cluster, Provider: "aws", Region: opts.region})
+
+	case "azure":
+		if !auth.HasCloudProvider("azure") {
+			return fmt.Errorf("Azure provider not available (built without Azure support)")
+		}
+		if opts.cluster == "" {
+			return fmt.Errorf("--cluster is required for Azure provider")
+		}
+		provider, err := auth.NewAKSProvider(ctx, auth.AKSProviderOptions{
+			SubscriptionID: opts.subscription,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create AKS provider: %w", err)
+		}
+		cfg, err := provider.GetRestConfig(ctx, opts.cluster)
+		if err != nil {
+			return fmt.Errorf("failed to get AKS cluster config: %w", err)
+		}
+		restConfig = cfg
+		clusters = append(clusters, auth.ClusterInfo{Name: opts.cluster, Provider: "azure"})
+
+	case "gcp":
+		if !auth.HasCloudProvider("gcp") {
+			return fmt.Errorf("GCP provider not available (built without GCP support)")
+		}
+		if opts.cluster == "" {
+			return fmt.Errorf("--cluster is required for GCP provider")
+		}
+		projects := []string{}
+		if opts.project != "" {
+			projects = []string{opts.project}
+		}
+		provider, err := auth.NewGKEProvider(ctx, auth.GKEProviderOptions{
+			Projects: projects,
+		})
+		if err != nil {
+			return fmt.Errorf("failed to create GKE provider: %w", err)
+		}
+		cfg, err := provider.GetRestConfig(ctx, opts.cluster)
+		if err != nil {
+			return fmt.Errorf("failed to get GKE cluster config: %w", err)
+		}
+		restConfig = cfg
+		clusters = append(clusters, auth.ClusterInfo{Name: opts.cluster, Provider: "gcp"})
+
+	case "", "kubeconfig":
 		provider, err := auth.NewKubeconfigProvider(opts.kubeconfig)
 		if err != nil {
 			return fmt.Errorf("failed to create kubeconfig provider: %w", err)
 		}
-
 		if opts.cluster != "" {
 			cfg, err := provider.GetRestConfig(ctx, opts.cluster)
 			if err != nil {
@@ -181,6 +248,9 @@ func runScan(opts scanOptions) error {
 			restConfig = cfg
 			clusters = append(clusters, auth.ClusterInfo{Name: provider.CurrentContext()})
 		}
+
+	default:
+		return fmt.Errorf("unknown provider: %s (valid: aws, azure, gcp, kubeconfig)", opts.provider)
 	}
 
 	if restConfig == nil {
@@ -199,8 +269,7 @@ func runScan(opts scanOptions) error {
 	for _, cluster := range clusters {
 		fmt.Printf("Scanning cluster: %s\n", cluster.Name)
 
-		cfg := restConfig.(*rest.Config)
-		mgr, err := collector.NewManager(cfg, collector.ManagerOptions{
+		mgr, err := collector.NewManager(restConfig, collector.ManagerOptions{
 			Namespaces:        opts.namespaces,
 			NamespacesExclude: opts.excludeNS,
 			Parallel:          5,
