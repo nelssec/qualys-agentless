@@ -6,21 +6,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
-	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials/stscreds"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
 	"github.com/aws/aws-sdk-go-v2/service/sts"
-	smithyhttp "github.com/aws/smithy-go/transport/http"
 	"k8s.io/client-go/rest"
-)
-
-const (
-	clusterIDHeader = "x-k8s-aws-id"
-	tokenExpiration = 15 * time.Minute
-	tokenPrefix     = "k8s-aws-v1."
+	"sigs.k8s.io/aws-iam-authenticator/pkg/token"
 )
 
 type EKSProvider struct {
@@ -96,14 +89,14 @@ func (p *EKSProvider) GetRestConfig(ctx context.Context, clusterName string) (*r
 		return nil, fmt.Errorf("failed to decode CA data")
 	}
 
-	token, err := p.generateToken(ctx, clusterName)
+	tokenStr, err := p.generateToken(clusterName)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate authentication token")
+		return nil, fmt.Errorf("failed to generate authentication token: %w", err)
 	}
 
 	return &rest.Config{
 		Host:        aws.ToString(cluster.Endpoint),
-		BearerToken: token,
+		BearerToken: tokenStr,
 		TLSClientConfig: rest.TLSClientConfig{
 			CAData: caData,
 		},
@@ -112,23 +105,18 @@ func (p *EKSProvider) GetRestConfig(ctx context.Context, clusterName string) (*r
 	}, nil
 }
 
-func (p *EKSProvider) generateToken(ctx context.Context, clusterName string) (string, error) {
-	presignClient := sts.NewPresignClient(p.stsClient)
-
-	presignedReq, err := presignClient.PresignGetCallerIdentity(ctx, &sts.GetCallerIdentityInput{},
-		func(po *sts.PresignOptions) {
-			po.ClientOptions = append(po.ClientOptions, func(o *sts.Options) {
-				o.APIOptions = append(o.APIOptions, smithyhttp.AddHeaderValue(clusterIDHeader, clusterName))
-			})
-		},
-	)
+func (p *EKSProvider) generateToken(clusterName string) (string, error) {
+	gen, err := token.NewGenerator(false, false)
 	if err != nil {
-		return "", fmt.Errorf("failed to generate presigned request")
+		return "", fmt.Errorf("failed to create token generator: %w", err)
 	}
 
-	token := tokenPrefix + base64.RawURLEncoding.EncodeToString([]byte(presignedReq.URL))
+	tok, err := gen.GetWithSTS(clusterName, p.stsClient)
+	if err != nil {
+		return "", fmt.Errorf("failed to generate token: %w", err)
+	}
 
-	return token, nil
+	return tok.Token, nil
 }
 
 func (p *EKSProvider) ListClusters(ctx context.Context) ([]ClusterInfo, error) {
