@@ -1,22 +1,20 @@
 class QualysK8s < Formula
   desc "Agentless Kubernetes security scanner for CIS, NSA-CISA, and MITRE compliance"
   homepage "https://github.com/nelssec/qualys-agentless"
-  version "0.1.0"
   license "Apache-2.0"
+  version "0.1.0"
 
   on_macos do
-    on_arm do
+    if Hardware::CPU.arm?
       url "https://github.com/nelssec/qualys-agentless/releases/download/v#{version}/qualys-k8s-darwin-arm64"
-      sha256 "PLACEHOLDER_SHA256_DARWIN_ARM64"
+      sha256 "UPDATE_SHA256_DARWIN_ARM64"
 
       def install
         bin.install "qualys-k8s-darwin-arm64" => "qualys-k8s"
       end
-    end
-
-    on_intel do
+    else
       url "https://github.com/nelssec/qualys-agentless/releases/download/v#{version}/qualys-k8s-darwin-amd64"
-      sha256 "PLACEHOLDER_SHA256_DARWIN_AMD64"
+      sha256 "UPDATE_SHA256_DARWIN_AMD64"
 
       def install
         bin.install "qualys-k8s-darwin-amd64" => "qualys-k8s"
@@ -25,18 +23,16 @@ class QualysK8s < Formula
   end
 
   on_linux do
-    on_arm do
+    if Hardware::CPU.arm?
       url "https://github.com/nelssec/qualys-agentless/releases/download/v#{version}/qualys-k8s-linux-arm64"
-      sha256 "PLACEHOLDER_SHA256_LINUX_ARM64"
+      sha256 "UPDATE_SHA256_LINUX_ARM64"
 
       def install
         bin.install "qualys-k8s-linux-arm64" => "qualys-k8s"
       end
-    end
-
-    on_intel do
+    else
       url "https://github.com/nelssec/qualys-agentless/releases/download/v#{version}/qualys-k8s-linux-amd64"
-      sha256 "PLACEHOLDER_SHA256_LINUX_AMD64"
+      sha256 "UPDATE_SHA256_LINUX_AMD64"
 
       def install
         bin.install "qualys-k8s-linux-amd64" => "qualys-k8s"
@@ -45,6 +41,6 @@ class QualysK8s < Formula
   end
 
   test do
-    assert_match "qualys-k8s", shell_output("#{bin}/qualys-k8s --version")
+    assert_match version.to_s, shell_output("#{bin}/qualys-k8s --version")
   end
 end

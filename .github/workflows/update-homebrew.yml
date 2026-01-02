@@ -1,0 +1,46 @@
+name: Update Homebrew
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-tap:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: nelssec/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+      - name: Download checksums
+        run: |
+          curl -fsSL https://github.com/nelssec/qualys-agentless/releases/download/${{ github.ref_name }}/checksums.txt -o checksums.txt
+
+      - name: Update formula
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION="${VERSION#v}"
+
+          SHA_DARWIN_ARM64=$(grep darwin-arm64 checksums.txt | cut -d" " -f1)
+          SHA_DARWIN_AMD64=$(grep darwin-amd64 checksums.txt | cut -d" " -f1)
+          SHA_LINUX_ARM64=$(grep "linux-arm64$" checksums.txt | cut -d" " -f1)
+          SHA_LINUX_AMD64=$(grep "linux-amd64$" checksums.txt | cut -d" " -f1)
+
+          # Update version
+          sed -i 's/version ".*"/version "'"${VERSION}"'"/' Formula/qualys-k8s.rb
+
+          # Update SHA256 values (matches both placeholders and existing hashes)
+          sed -i '/darwin-arm64/{ n; s/sha256 "[^"]*"/sha256 "'"${SHA_DARWIN_ARM64}"'"/; }' Formula/qualys-k8s.rb
+          sed -i '/darwin-amd64/{ n; s/sha256 "[^"]*"/sha256 "'"${SHA_DARWIN_AMD64}"'"/; }' Formula/qualys-k8s.rb
+          sed -i '/linux-arm64/{ n; s/sha256 "[^"]*"/sha256 "'"${SHA_LINUX_ARM64}"'"/; }' Formula/qualys-k8s.rb
+          sed -i '/linux-amd64/{ n; s/sha256 "[^"]*"/sha256 "'"${SHA_LINUX_AMD64}"'"/; }' Formula/qualys-k8s.rb
+
+      - name: Commit and push
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add Formula/qualys-k8s.rb
+          git commit -m "Update qualys-k8s to ${{ github.ref_name }}"
+          git push
