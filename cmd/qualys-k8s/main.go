@@ -16,6 +16,9 @@ import (
 	"github.com/nelssec/qualys-agentless/pkg/compliance/policies"
 	"github.com/nelssec/qualys-agentless/pkg/config"
 	"github.com/nelssec/qualys-agentless/pkg/daemon"
+	"github.com/nelssec/qualys-agentless/pkg/graph"
+	"github.com/nelssec/qualys-agentless/pkg/graph/analyzers"
+	"github.com/nelssec/qualys-agentless/pkg/graph/export"
 	"github.com/nelssec/qualys-agentless/pkg/helm"
 	"github.com/nelssec/qualys-agentless/pkg/inventory"
 	"github.com/nelssec/qualys-agentless/pkg/manifest"
@@ -40,6 +43,7 @@ func main() {
 	rootCmd.AddCommand(newScanManifestCmd())
 	rootCmd.AddCommand(newScanHelmCmd())
 	rootCmd.AddCommand(newInventoryCmd())
+	rootCmd.AddCommand(newGraphCmd())
 	rootCmd.AddCommand(newDaemonCmd())
 	rootCmd.AddCommand(newFrameworksCmd())
 	rootCmd.AddCommand(newControlsCmd())
@@ -101,7 +105,7 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
 	cmd.Flags().StringSliceVar(&frameworks, "frameworks", []string{"cis-k8s-1.11"}, "Frameworks to evaluate")
 	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to scan")
-	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public"}, "Namespaces to exclude")
+	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public", "qualys"}, "Namespaces to exclude")
 	cmd.Flags().Float64Var(&complianceThreshold, "compliance-threshold", 0, "Minimum compliance score (0-100), exit 1 if below")
 	cmd.Flags().StringVar(&severityThreshold, "severity-threshold", "", "Fail if findings at or above severity (low, medium, high, critical)")
 	cmd.Flags().BoolVar(&includeInventory, "include-inventory", false, "Include full cluster inventory in JSON output")
@@ -705,7 +709,7 @@ func newInventoryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&outputFormat, "output", "json", "Output format (json, yaml)")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
 	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to collect")
-	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public"}, "Namespaces to exclude")
+	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public", "qualys"}, "Namespaces to exclude")
 
 	return cmd
 }
@@ -881,4 +885,277 @@ func newControlsCmd() *cobra.Command {
 
 	cmd.AddCommand(listCmd)
 	return cmd
+}
+
+func newGraphCmd() *cobra.Command {
+	var (
+		kubeconfig     string
+		provider       string
+		region         string
+		cluster        string
+		subscription   string
+		project        string
+		outputFormat   string
+		outputFile     string
+		namespaces     []string
+		excludeNS      []string
+		graphType      string
+		includeAnalysis bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "graph",
+		Short: "Generate security relationship graphs and attack path analysis",
+		Long:  "Build a graph of security relationships between Kubernetes resources and analyze attack paths, container escapes, and external exposure",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigChan
+				fmt.Println("\nReceived interrupt, shutting down...")
+				cancel()
+			}()
+
+			var restConfig *rest.Config
+			var clusterName string
+
+			switch provider {
+			case "aws":
+				if !auth.HasCloudProvider("aws") {
+					return fmt.Errorf("AWS provider not available")
+				}
+				if cluster == "" || region == "" {
+					return fmt.Errorf("--cluster and --region required for AWS")
+				}
+				p, err := auth.NewEKSProvider(ctx, auth.EKSProviderOptions{Region: region})
+				if err != nil {
+					return err
+				}
+				restConfig, err = p.GetRestConfig(ctx, cluster)
+				if err != nil {
+					return err
+				}
+				clusterName = cluster
+
+			case "azure":
+				if !auth.HasCloudProvider("azure") {
+					return fmt.Errorf("Azure provider not available")
+				}
+				if cluster == "" {
+					return fmt.Errorf("--cluster required for Azure")
+				}
+				p, err := auth.NewAKSProvider(ctx, auth.AKSProviderOptions{SubscriptionID: subscription})
+				if err != nil {
+					return err
+				}
+				restConfig, err = p.GetRestConfig(ctx, cluster)
+				if err != nil {
+					return err
+				}
+				clusterName = cluster
+
+			case "gcp":
+				if !auth.HasCloudProvider("gcp") {
+					return fmt.Errorf("GCP provider not available")
+				}
+				if cluster == "" {
+					return fmt.Errorf("--cluster required for GCP")
+				}
+				projects := []string{}
+				if project != "" {
+					projects = []string{project}
+				}
+				p, err := auth.NewGKEProvider(ctx, auth.GKEProviderOptions{Projects: projects})
+				if err != nil {
+					return err
+				}
+				restConfig, err = p.GetRestConfig(ctx, cluster)
+				if err != nil {
+					return err
+				}
+				clusterName = cluster
+
+			default:
+				p, err := auth.NewKubeconfigProvider(kubeconfig)
+				if err != nil {
+					return err
+				}
+				if cluster != "" {
+					restConfig, err = p.GetRestConfig(ctx, cluster)
+					clusterName = cluster
+				} else {
+					restConfig, err = p.GetRestConfig(ctx, "")
+					clusterName = p.CurrentContext()
+				}
+				if err != nil {
+					return err
+				}
+			}
+
+			fmt.Printf("Building security graph for: %s\n", clusterName)
+
+			mgr, err := collector.NewManager(restConfig, collector.ManagerOptions{
+				Namespaces:        namespaces,
+				NamespacesExclude: excludeNS,
+				Parallel:          5,
+				Timeout:           5 * time.Minute,
+			})
+			if err != nil {
+				return err
+			}
+
+			mgr.RegisterDefaultCollectors()
+
+			fmt.Println("  Collecting cluster inventory...")
+			inv, err := mgr.Collect(ctx)
+			if err != nil {
+				return err
+			}
+			inv.Cluster.Name = clusterName
+
+			fmt.Printf("  Collected: %d pods, %d services, %d roles\n",
+				len(inv.Workloads.Pods), len(inv.Services),
+				len(inv.RBAC.Roles)+len(inv.RBAC.ClusterRoles))
+
+			fmt.Println("  Building security graph...")
+			builder := graph.NewBuilder(inv)
+			g := builder.Build()
+
+			fmt.Printf("  Graph: %d nodes, %d edges\n", len(g.Nodes), len(g.Edges))
+
+			var analysisOutput *GraphAnalysisOutput
+			if includeAnalysis {
+				fmt.Println("  Running security analyzers...")
+				analysisOutput = runGraphAnalyzers(g, inv)
+				fmt.Printf("  Found: %d escalation paths, %d escape vectors, %d exposures\n",
+					len(analysisOutput.EscalationPaths),
+					len(analysisOutput.ContainerEscapes),
+					len(analysisOutput.Exposures))
+			}
+
+			return outputGraph(g, analysisOutput, graphType, outputFormat, outputFile)
+		},
+	}
+
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file")
+	cmd.Flags().StringVar(&provider, "provider", "", "Cloud provider: aws, azure, gcp")
+	cmd.Flags().StringVar(&region, "region", "", "AWS region")
+	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster name")
+	cmd.Flags().StringVar(&subscription, "subscription", "", "Azure subscription ID")
+	cmd.Flags().StringVar(&project, "project", "", "GCP project ID")
+	cmd.Flags().StringVar(&outputFormat, "format", "html", "Output format: html, dot, mermaid, json")
+	cmd.Flags().StringVar(&outputFile, "output", "", "Output file path")
+	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to include")
+	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public", "qualys"}, "Namespaces to exclude")
+	cmd.Flags().StringVar(&graphType, "type", "full", "Graph type: full, attack-paths, exposure")
+	cmd.Flags().BoolVar(&includeAnalysis, "analyze", true, "Include security analysis")
+
+	return cmd
+}
+
+type GraphAnalysisOutput struct {
+	EscalationPaths   []analyzers.EscalationPath       `json:"escalationPaths,omitempty"`
+	ContainerEscapes  []analyzers.ContainerEscapeVector `json:"containerEscapes,omitempty"`
+	Exposures         []analyzers.ExternalExposure      `json:"externalExposures,omitempty"`
+	CloudMetadataRisks []analyzers.CloudMetadataRisk    `json:"cloudMetadataRisks,omitempty"`
+}
+
+func runGraphAnalyzers(g *graph.SecurityGraph, inv *inventory.ClusterInventory) *GraphAnalysisOutput {
+	output := &GraphAnalysisOutput{}
+
+	escAnalyzer := analyzers.NewEscalationAnalyzer(g)
+	output.EscalationPaths = escAnalyzer.Analyze()
+
+	escapeAnalyzer := analyzers.NewEscapeAnalyzer(g, inv)
+	output.ContainerEscapes = escapeAnalyzer.Analyze()
+
+	expAnalyzer := analyzers.NewExposureAnalyzer(g, inv)
+	output.Exposures = expAnalyzer.Analyze()
+
+	cloudAnalyzer := analyzers.NewCloudMetadataAnalyzer(g, inv)
+	output.CloudMetadataRisks = cloudAnalyzer.Analyze()
+
+	return output
+}
+
+type FullGraphOutput struct {
+	Graph    *graph.SecurityGraph `json:"graph"`
+	Analysis *GraphAnalysisOutput `json:"analysis,omitempty"`
+}
+
+func outputGraph(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, graphType, format, file string) error {
+	var data []byte
+	var err error
+
+	switch format {
+	case "json":
+		fullOutput := FullGraphOutput{Graph: g, Analysis: analysis}
+		data, err = json.MarshalIndent(fullOutput, "", "  ")
+
+	case "dot":
+		exporter := export.NewDOTExporter(g)
+		switch graphType {
+		case "attack-paths":
+			data = []byte(exporter.ExportAttackPaths())
+		default:
+			data = []byte(exporter.Export())
+		}
+
+	case "mermaid":
+		exporter := export.NewMermaidExporter(g)
+		switch graphType {
+		case "attack-paths":
+			data = []byte(exporter.ExportAttackPaths())
+		case "exposure":
+			data = []byte(exporter.ExportExposureFlow())
+		default:
+			data = []byte(exporter.Export())
+		}
+
+	case "html":
+		exporter := export.NewD3Exporter(g)
+		data = []byte(exporter.ExportHTML())
+
+	case "topology":
+		exporter := export.NewTopologyExporter(g)
+		// Load remediation data from compliance controls
+		remLookup := compliance.GetDefaultRemediationLookup()
+		remInfo := make(map[string]*export.RemediationInfo)
+		for pattern, ctrl := range remLookup {
+			remInfo[pattern] = &export.RemediationInfo{
+				ID:          ctrl.ID,
+				Name:        ctrl.Name,
+				Severity:    ctrl.Severity,
+				Section:     ctrl.Section,
+				Remediation: ctrl.Remediation,
+				Framework:   ctrl.Framework,
+			}
+		}
+		exporter.SetRemediation(remInfo)
+		data = []byte(exporter.ExportHTML())
+
+	default:
+		return fmt.Errorf("unknown format: %s", format)
+	}
+
+	if err != nil {
+		return err
+	}
+
+	if file != "" {
+		if err := os.WriteFile(file, data, 0600); err != nil {
+			return err
+		}
+		fmt.Printf("Graph written to: %s\n", file)
+		if format == "html" || format == "topology" {
+			fmt.Printf("Open in browser: file://%s\n", file)
+		}
+	} else {
+		fmt.Print(string(data))
+	}
+
+	return nil
 }
