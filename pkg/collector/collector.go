@@ -72,14 +72,9 @@ func (m *Manager) RegisterDefaultCollectors() {
 	m.RegisterCollector(NewConfigCollector(m.options.Namespaces, m.options.NamespacesExclude))
 	m.RegisterCollector(NewServiceCollector(m.options.Namespaces, m.options.NamespacesExclude))
 	m.RegisterCollector(NewIngressCollector(m.options.Namespaces, m.options.NamespacesExclude))
-	m.RegisterCollector(NewEventCollector(time.Hour))
 	m.RegisterCollector(NewQuotaCollector(m.options.Namespaces, m.options.NamespacesExclude))
-	m.RegisterCollector(NewAutoscalingCollector(m.options.Namespaces, m.options.NamespacesExclude))
-	m.RegisterCollector(NewStorageCollector(m.options.Namespaces, m.options.NamespacesExclude))
 	m.RegisterCollector(NewWebhookCollector())
-	m.RegisterCollector(NewClusterResourceCollector())
 	m.RegisterCollector(NewCRDCollector())
-	m.RegisterCollector(NewEndpointCollector(m.options.Namespaces, m.options.NamespacesExclude))
 }
 
 func (m *Manager) Collect(ctx context.Context) (*inventory.ClusterInventory, error) {
@@ -132,6 +127,16 @@ func (m *Manager) Collect(ctx context.Context) (*inventory.ClusterInventory, err
 
 	inv.Images = extractImages(inv.Workloads.Pods)
 	inv.AIWorkloads = detectAIWorkloads(inv.Workloads.Pods)
+	inv.SecurityPosture = computeSecurityPosture(inv)
+	inv.RBACRisk = computeRBACRisk(inv)
+	inv.AttackSurface = computeAttackSurface(inv)
+	inv.NamespaceCompliance = computeNamespaceCompliance(inv)
+	inv.WorkloadRisk = computeWorkloadRisk(inv)
+	inv.ImageSupplyChain = computeImageSupplyChain(inv)
+	inv.SecretsExposure = computeSecretsExposure(inv)
+	inv.AdmissionGaps = computeAdmissionGaps(inv)
+	inv.LateralMovement = computeLateralMovement(inv)
+	inv.DeprecatedAPIs = computeDeprecatedAPIs(inv)
 
 	return inv, nil
 }
@@ -195,39 +200,18 @@ func (m *Manager) mergeResults(inv *inventory.ClusterInventory, c Collector) {
 		if ic, ok := c.(*IngressCollector); ok {
 			inv.Ingresses = ic.Results().([]inventory.IngressInfo)
 		}
-	case "event":
-		if ec, ok := c.(*EventCollector); ok {
-			inv.Events = ec.Results().([]inventory.EventInfo)
-		}
 	case "quota":
 		if qc, ok := c.(*QuotaCollector); ok {
 			inv.ResourceQuotas = qc.ResourceQuotas()
 			inv.LimitRanges = qc.LimitRanges()
 		}
-	case "autoscaling":
-		if ac, ok := c.(*AutoscalingCollector); ok {
-			inv.PDBs = ac.PDBs()
-			inv.HPAs = ac.HPAs()
-		}
-	case "storage":
-		if sc, ok := c.(*StorageCollector); ok {
-			inv.Storage = sc.Results().(inventory.StorageInventory)
-		}
 	case "webhook":
 		if wc, ok := c.(*WebhookCollector); ok {
 			inv.Webhooks = wc.Results().(inventory.WebhookInventory)
 		}
-	case "clusterresource":
-		if crc, ok := c.(*ClusterResourceCollector); ok {
-			inv.PriorityClasses = crc.PriorityClasses()
-		}
 	case "crd":
 		if cc, ok := c.(*CRDCollector); ok {
 			inv.CRDs = cc.Results().([]inventory.CRDInfo)
-		}
-	case "endpoint":
-		if ec, ok := c.(*EndpointCollector); ok {
-			inv.Endpoints = ec.Results().([]inventory.EndpointInfo)
 		}
 	}
 }
@@ -621,4 +605,1032 @@ func setToSortedSlice(set map[string]struct{}) []string {
 	}
 	sort.Strings(slice)
 	return slice
+}
+
+var dangerousCapsList = []string{
+	"SYS_ADMIN", "SYS_PTRACE", "SYS_MODULE", "DAC_READ_SEARCH",
+	"NET_ADMIN", "NET_RAW", "SYS_RAWIO", "MKNOD",
+}
+
+func computeSecurityPosture(inv *inventory.ClusterInventory) inventory.SecurityPosture {
+	posture := inventory.SecurityPosture{}
+	dangerousCapsFound := make(map[string]struct{})
+
+	userNamespaces := make(map[string]bool)
+	for _, ns := range inv.Namespaces {
+		if ns.Name != "kube-system" && ns.Name != "kube-public" && ns.Name != "kube-node-lease" && ns.Name != "default" {
+			userNamespaces[ns.Name] = true
+		}
+	}
+
+	nsPolicies := make(map[string]bool)
+	for _, np := range inv.NetworkPolicies {
+		nsPolicies[np.Namespace] = true
+	}
+
+	for ns := range userNamespaces {
+		if !nsPolicies[ns] {
+			posture.NamespacesWithoutNetworkPolicies++
+		}
+	}
+
+	for _, pod := range inv.Workloads.Pods {
+		if pod.Namespace == "kube-system" || pod.Namespace == "kube-public" {
+			continue
+		}
+
+		hasSecurityContext := false
+		hasResourceLimits := true
+		hasHostPath := false
+
+		for _, vol := range pod.Volumes {
+			if vol.Type == "hostPath" {
+				hasHostPath = true
+				break
+			}
+		}
+		if hasHostPath {
+			posture.HostPathVolumes++
+		}
+
+		if pod.HostNetwork || pod.HostPID || pod.HostIPC {
+			posture.WorkloadsWithHostNamespace++
+		}
+
+		for _, container := range pod.Containers {
+			if container.SecurityContext != nil {
+				hasSecurityContext = true
+
+				if container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+					posture.PrivilegedWorkloads++
+				}
+
+				if container.SecurityContext.RunAsUser != nil && *container.SecurityContext.RunAsUser == 0 {
+					posture.WorkloadsRunningAsRoot++
+				} else if container.SecurityContext.RunAsNonRoot == nil || !*container.SecurityContext.RunAsNonRoot {
+					if pod.SecurityContext == nil || pod.SecurityContext.RunAsNonRoot == nil || !*pod.SecurityContext.RunAsNonRoot {
+						posture.WorkloadsRunningAsRoot++
+					}
+				}
+
+				if container.SecurityContext.AllowPrivilegeEscalation == nil || *container.SecurityContext.AllowPrivilegeEscalation {
+					posture.WorkloadsAllowingPrivEscalation++
+				}
+
+				if container.SecurityContext.Capabilities != nil {
+					for _, cap := range container.SecurityContext.Capabilities.Add {
+						for _, dangerous := range dangerousCapsList {
+							if cap == dangerous {
+								dangerousCapsFound[cap] = struct{}{}
+							}
+						}
+					}
+				}
+			}
+
+			if len(container.Resources.Limits) == 0 {
+				hasResourceLimits = false
+			}
+		}
+
+		if !hasSecurityContext {
+			posture.WorkloadsWithoutSecurityContext++
+		}
+		if !hasResourceLimits {
+			posture.WorkloadsWithoutResourceLimits++
+		}
+	}
+
+	for _, img := range inv.Images {
+		if img.Digest == "" {
+			posture.ImagesWithoutDigest++
+		}
+		if img.Tag == "latest" {
+			posture.ImagesUsingLatestTag++
+		}
+	}
+
+	for _, svc := range inv.Services {
+		if svc.Type == "LoadBalancer" || svc.Type == "NodePort" {
+			posture.ExternallyExposedServices++
+		}
+	}
+	posture.ExternallyExposedServices += len(inv.Ingresses)
+
+	for _, sa := range inv.ServiceAccounts {
+		if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+			posture.ServiceAccountsWithAutoMount++
+		}
+	}
+
+	for _, cj := range inv.Workloads.CronJobs {
+		if !cj.Suspend {
+			posture.CronJobsEnabled++
+		}
+	}
+
+	wildcardVerbs := []string{"*"}
+	dangerousResources := []string{"secrets", "pods", "deployments", "*"}
+	for _, cr := range inv.RBAC.ClusterRoles {
+		for _, rule := range cr.Rules {
+			isWildcard := false
+			for _, verb := range rule.Verbs {
+				for _, wv := range wildcardVerbs {
+					if verb == wv {
+						isWildcard = true
+						break
+					}
+				}
+			}
+			if isWildcard {
+				for _, res := range rule.Resources {
+					for _, dr := range dangerousResources {
+						if res == dr {
+							posture.OverpermissiveRBAC++
+							break
+						}
+					}
+				}
+			}
+		}
+	}
+
+	posture.DangerousCapabilities = setToSortedSlice(dangerousCapsFound)
+
+	riskCount := posture.PrivilegedWorkloads*10 +
+		posture.WorkloadsRunningAsRoot*3 +
+		posture.WorkloadsWithHostNamespace*5 +
+		posture.OverpermissiveRBAC*5 +
+		posture.ExternallyExposedServices*2 +
+		len(posture.DangerousCapabilities)*4
+
+	if riskCount == 0 {
+		posture.RiskScore = "low"
+	} else if riskCount < 20 {
+		posture.RiskScore = "medium"
+	} else if riskCount < 50 {
+		posture.RiskScore = "high"
+	} else {
+		posture.RiskScore = "critical"
+	}
+
+	return posture
+}
+
+func computeRBACRisk(inv *inventory.ClusterInventory) inventory.RBACRiskAnalysis {
+	analysis := inventory.RBACRiskAnalysis{}
+
+	clusterRoleRules := make(map[string][]inventory.PolicyRule)
+	for _, cr := range inv.RBAC.ClusterRoles {
+		clusterRoleRules[cr.Name] = cr.Rules
+	}
+
+	roleRules := make(map[string][]inventory.PolicyRule)
+	for _, r := range inv.RBAC.Roles {
+		key := r.Namespace + "/" + r.Name
+		roleRules[key] = r.Rules
+	}
+
+	// Safe default roles that legitimately allow unauthenticated access
+	safeUnauthRoles := map[string]bool{
+		"system:public-info-viewer": true, // Only /healthz, /version - needed for LB health checks
+		"system:discovery":          true, // API discovery, common default
+	}
+
+	for _, crb := range inv.RBAC.ClusterRoleBindings {
+		isClusterAdmin := crb.RoleRef.Name == "cluster-admin"
+		if isClusterAdmin {
+			analysis.ClusterAdminBindings++
+		}
+
+		for _, subject := range crb.Subjects {
+			if subject.Kind == "Group" && subject.Name == "system:unauthenticated" {
+				// Skip safe default roles
+				if !safeUnauthRoles[crb.RoleRef.Name] {
+					analysis.UnauthenticatedAccess = true
+					analysis.HighRiskBindings = append(analysis.HighRiskBindings, inventory.RBACRiskBinding{
+						Name:       crb.Name,
+						Kind:       "ClusterRoleBinding",
+						RoleRef:    crb.RoleRef.Name,
+						Subjects:   []string{"system:unauthenticated"},
+						RiskReason: "Grants access to unauthenticated users",
+					})
+				}
+			}
+			if subject.Kind == "Group" && subject.Name == "system:authenticated" {
+				analysis.AuthenticatedGroupAccess = true
+				if isClusterAdmin {
+					analysis.HighRiskBindings = append(analysis.HighRiskBindings, inventory.RBACRiskBinding{
+						Name:       crb.Name,
+						Kind:       "ClusterRoleBinding",
+						RoleRef:    crb.RoleRef.Name,
+						Subjects:   []string{"system:authenticated"},
+						RiskReason: "Grants cluster-admin to all authenticated users",
+					})
+				}
+			}
+			if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+				analysis.DefaultSAWithPermissions++
+			}
+		}
+
+		rules := clusterRoleRules[crb.RoleRef.Name]
+		if hasWildcardAccess(rules) {
+			analysis.WildcardRoles++
+		}
+		if hasSecretsAccess(rules) {
+			analysis.SecretsAccessRoles++
+			for _, subject := range crb.Subjects {
+				if subject.Kind == "ServiceAccount" {
+					saName := subject.Namespace + "/" + subject.Name
+					found := false
+					for _, existing := range analysis.PrivilegedServiceAccounts {
+						if existing == saName {
+							found = true
+							break
+						}
+					}
+					if !found {
+						analysis.PrivilegedServiceAccounts = append(analysis.PrivilegedServiceAccounts, saName)
+					}
+				}
+			}
+		}
+		if hasEscalationPerms(rules) {
+			analysis.EscalationCapableRoles++
+		}
+		if hasExecAccess(rules) {
+			analysis.ExecCapableRoles++
+		}
+	}
+
+	for _, rb := range inv.RBAC.RoleBindings {
+		for _, subject := range rb.Subjects {
+			if subject.Kind == "ServiceAccount" && subject.Namespace != "" && subject.Namespace != rb.Namespace {
+				analysis.CrossNamespaceBindings++
+			}
+			if subject.Kind == "ServiceAccount" && subject.Name == "default" {
+				analysis.DefaultSAWithPermissions++
+			}
+		}
+	}
+
+	riskScore := analysis.ClusterAdminBindings*20 +
+		analysis.WildcardRoles*10 +
+		analysis.EscalationCapableRoles*15 +
+		analysis.DefaultSAWithPermissions*5
+
+	if analysis.UnauthenticatedAccess {
+		riskScore += 50
+	}
+	if analysis.AuthenticatedGroupAccess && analysis.ClusterAdminBindings > 0 {
+		riskScore += 30
+	}
+
+	if riskScore == 0 {
+		analysis.RiskScore = "low"
+	} else if riskScore < 20 {
+		analysis.RiskScore = "medium"
+	} else if riskScore < 50 {
+		analysis.RiskScore = "high"
+	} else {
+		analysis.RiskScore = "critical"
+	}
+
+	return analysis
+}
+
+func hasWildcardAccess(rules []inventory.PolicyRule) bool {
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			if verb == "*" {
+				for _, res := range rule.Resources {
+					if res == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasSecretsAccess(rules []inventory.PolicyRule) bool {
+	for _, rule := range rules {
+		for _, res := range rule.Resources {
+			if res == "secrets" || res == "*" {
+				for _, verb := range rule.Verbs {
+					if verb == "get" || verb == "list" || verb == "watch" || verb == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasEscalationPerms(rules []inventory.PolicyRule) bool {
+	escalationVerbs := map[string]bool{"bind": true, "escalate": true, "impersonate": true}
+	for _, rule := range rules {
+		for _, verb := range rule.Verbs {
+			if escalationVerbs[verb] || verb == "*" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasExecAccess(rules []inventory.PolicyRule) bool {
+	for _, rule := range rules {
+		for _, res := range rule.Resources {
+			if res == "pods/exec" || res == "*" {
+				for _, verb := range rule.Verbs {
+					if verb == "create" || verb == "*" {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+func computeAttackSurface(inv *inventory.ClusterInventory) inventory.AttackSurface {
+	surface := inventory.AttackSurface{}
+
+	nsPolicies := make(map[string]bool)
+	for _, np := range inv.NetworkPolicies {
+		nsPolicies[np.Namespace] = true
+	}
+
+	for _, svc := range inv.Services {
+		ports := make([]int32, 0)
+		for _, p := range svc.Ports {
+			ports = append(ports, p.Port)
+		}
+
+		switch svc.Type {
+		case "LoadBalancer":
+			surface.LoadBalancers = append(surface.LoadBalancers, inventory.ExposedService{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+				Type:      svc.Type,
+				Ports:     ports,
+			})
+			surface.ExternalEntryPoints++
+			surface.InternetFacingServices++
+		case "NodePort":
+			nodePorts := make([]int32, 0)
+			for _, p := range svc.Ports {
+				if p.NodePort > 0 {
+					nodePorts = append(nodePorts, p.NodePort)
+				}
+			}
+			surface.NodePorts = append(surface.NodePorts, inventory.ExposedService{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+				Type:      svc.Type,
+				Ports:     nodePorts,
+			})
+			surface.ExternalEntryPoints++
+		}
+
+		if len(svc.ExternalIPs) > 0 {
+			surface.ExternalIPs = append(surface.ExternalIPs, inventory.ExposedService{
+				Name:      svc.Name,
+				Namespace: svc.Namespace,
+				Type:      "ExternalIP",
+				Ports:     ports,
+			})
+			surface.ExternalEntryPoints++
+		}
+	}
+
+	for _, ing := range inv.Ingresses {
+		hosts := make([]string, 0)
+		pathCount := 0
+		for _, rule := range ing.Rules {
+			if rule.Host != "" {
+				hosts = append(hosts, rule.Host)
+			}
+			pathCount += len(rule.Paths)
+		}
+
+		hasTLS := len(ing.TLS) > 0
+		surface.Ingresses = append(surface.Ingresses, inventory.ExposedIngress{
+			Name:      ing.Name,
+			Namespace: ing.Namespace,
+			Hosts:     hosts,
+			TLS:       hasTLS,
+			Paths:     pathCount,
+		})
+		surface.ExternalEntryPoints++
+		surface.InternetFacingServices++
+	}
+
+	for _, pod := range inv.Workloads.Pods {
+		if pod.Namespace == "kube-system" {
+			continue
+		}
+
+		if pod.HostNetwork {
+			surface.HostNetworkPods++
+		}
+
+		for _, container := range pod.Containers {
+			for _, port := range container.Ports {
+				if port.HostPort > 0 {
+					surface.HostPortPods++
+					break
+				}
+			}
+		}
+	}
+
+	for _, ns := range inv.Namespaces {
+		if isSystemNamespace(ns.Name) {
+			continue
+		}
+		if !nsPolicies[ns.Name] {
+			surface.UnprotectedNamespaces = append(surface.UnprotectedNamespaces, ns.Name)
+		}
+	}
+
+	return surface
+}
+
+func computeNamespaceCompliance(inv *inventory.ClusterInventory) inventory.NamespaceCompliance {
+	compliance := inventory.NamespaceCompliance{}
+
+	nsNetPolicies := make(map[string][]inventory.NetworkPolicyInfo)
+	for _, np := range inv.NetworkPolicies {
+		nsNetPolicies[np.Namespace] = append(nsNetPolicies[np.Namespace], np)
+	}
+
+	nsQuotas := make(map[string]bool)
+	for _, q := range inv.ResourceQuotas {
+		nsQuotas[q.Namespace] = true
+	}
+
+	nsLimitRanges := make(map[string]bool)
+	for _, lr := range inv.LimitRanges {
+		nsLimitRanges[lr.Namespace] = true
+	}
+
+	nsSAs := make(map[string][]inventory.ServiceAccountInfo)
+	for _, sa := range inv.ServiceAccounts {
+		nsSAs[sa.Namespace] = append(nsSAs[sa.Namespace], sa)
+	}
+
+	for _, ns := range inv.Namespaces {
+		if isSystemNamespace(ns.Name) {
+			continue
+		}
+
+		compliance.TotalNamespaces++
+
+		detail := inventory.NamespaceComplianceDetail{
+			Name: ns.Name,
+		}
+
+		score := 0
+		maxScore := 6
+
+		if enforceLevel, ok := ns.Labels["pod-security.kubernetes.io/enforce"]; ok {
+			detail.HasPSALabels = true
+			detail.PSAEnforceLevel = enforceLevel
+			if enforceLevel == "restricted" {
+				score += 2
+			} else if enforceLevel == "baseline" {
+				score++
+			}
+		} else {
+			detail.Issues = append(detail.Issues, "No PSA enforce label")
+		}
+
+		policies := nsNetPolicies[ns.Name]
+		if len(policies) > 0 {
+			detail.HasNetworkPolicies = true
+			score++
+
+			for _, policy := range policies {
+				if len(policy.PodSelector) == 0 && policy.IngressRules == 0 {
+					detail.HasDefaultDeny = true
+					score++
+					break
+				}
+				if len(policy.PodSelector) == 0 && policy.EgressRules == 0 {
+					detail.HasDefaultDeny = true
+					score++
+					break
+				}
+			}
+		} else {
+			detail.Issues = append(detail.Issues, "No NetworkPolicies")
+		}
+
+		if nsQuotas[ns.Name] {
+			detail.HasResourceQuota = true
+			score++
+		} else {
+			detail.Issues = append(detail.Issues, "No ResourceQuota")
+		}
+
+		if nsLimitRanges[ns.Name] {
+			detail.HasLimitRange = true
+			score++
+		}
+
+		sas := nsSAs[ns.Name]
+		detail.ServiceAccountCount = len(sas)
+		for _, sa := range sas {
+			if sa.Name == "default" && len(sa.Secrets) > 0 {
+				detail.DefaultSAHasSecrets = true
+				detail.Issues = append(detail.Issues, "Default SA has secrets")
+			}
+		}
+
+		detail.ComplianceScore = int(float64(score) / float64(maxScore) * 100)
+
+		if detail.ComplianceScore >= 80 {
+			compliance.CompliantNamespaces++
+		}
+
+		compliance.NamespaceDetails = append(compliance.NamespaceDetails, detail)
+	}
+
+	if compliance.TotalNamespaces > 0 {
+		compliance.ComplianceScore = float64(compliance.CompliantNamespaces) / float64(compliance.TotalNamespaces) * 100
+	}
+
+	return compliance
+}
+
+func isSystemNamespace(name string) bool {
+	return name == "kube-system" || name == "kube-public" || name == "kube-node-lease" || name == "default" || name == "qualys"
+}
+
+func computeWorkloadRisk(inv *inventory.ClusterInventory) inventory.WorkloadRiskRanking {
+	ranking := inventory.WorkloadRiskRanking{}
+
+	saSecretAccess := make(map[string]bool)
+	for _, crb := range inv.RBAC.ClusterRoleBindings {
+		for _, subject := range crb.Subjects {
+			if subject.Kind == "ServiceAccount" {
+				key := subject.Namespace + "/" + subject.Name
+				saSecretAccess[key] = true
+			}
+		}
+	}
+
+	var workloads []inventory.WorkloadRiskInfo
+
+	for _, pod := range inv.Workloads.Pods {
+		if isSystemNamespace(pod.Namespace) {
+			continue
+		}
+
+		risk := inventory.WorkloadRiskInfo{
+			Name:           pod.Name,
+			Namespace:      pod.Namespace,
+			Kind:           "Pod",
+			ServiceAccount: pod.ServiceAccount,
+			RiskFactors:    []string{},
+		}
+
+		score := 0
+
+		if pod.HostNetwork {
+			score += 20
+			risk.RiskFactors = append(risk.RiskFactors, "hostNetwork")
+			risk.HasNetworkAccess = true
+		}
+		if pod.HostPID {
+			score += 15
+			risk.RiskFactors = append(risk.RiskFactors, "hostPID")
+		}
+		if pod.HostIPC {
+			score += 10
+			risk.RiskFactors = append(risk.RiskFactors, "hostIPC")
+		}
+
+		saKey := pod.Namespace + "/" + pod.ServiceAccount
+		if saSecretAccess[saKey] {
+			score += 15
+			risk.RiskFactors = append(risk.RiskFactors, "serviceAccountHasClusterAccess")
+			risk.HasSecretAccess = true
+		}
+
+		for _, container := range pod.Containers {
+			if container.SecurityContext != nil {
+				if container.SecurityContext.Privileged != nil && *container.SecurityContext.Privileged {
+					score += 25
+					risk.RiskFactors = append(risk.RiskFactors, "privileged")
+				}
+				if container.SecurityContext.Capabilities != nil {
+					for _, cap := range container.SecurityContext.Capabilities.Add {
+						if cap == "SYS_ADMIN" || cap == "SYS_PTRACE" {
+							score += 20
+							risk.RiskFactors = append(risk.RiskFactors, "dangerousCapability:"+cap)
+						}
+					}
+				}
+			}
+		}
+
+		for _, vol := range pod.Volumes {
+			if vol.Type == "hostPath" {
+				score += 15
+				risk.RiskFactors = append(risk.RiskFactors, "hostPath:"+vol.Source)
+			}
+			if vol.Type == "secret" {
+				risk.HasSecretAccess = true
+			}
+		}
+
+		risk.RiskScore = score
+		if score >= 50 {
+			risk.RiskLevel = "critical"
+			ranking.HighRiskCount++
+		} else if score >= 25 {
+			risk.RiskLevel = "high"
+			ranking.HighRiskCount++
+		} else if score >= 10 {
+			risk.RiskLevel = "medium"
+			ranking.MediumRiskCount++
+		} else {
+			risk.RiskLevel = "low"
+			ranking.LowRiskCount++
+		}
+
+		if score >= 10 {
+			workloads = append(workloads, risk)
+		}
+	}
+
+	sort.Slice(workloads, func(i, j int) bool {
+		return workloads[i].RiskScore > workloads[j].RiskScore
+	})
+
+	if len(workloads) > 10 {
+		ranking.TopRiskyWorkloads = workloads[:10]
+	} else {
+		ranking.TopRiskyWorkloads = workloads
+	}
+
+	return ranking
+}
+
+var trustedRegistries = map[string]bool{
+	"gcr.io":                      true,
+	"us.gcr.io":                   true,
+	"eu.gcr.io":                   true,
+	"asia.gcr.io":                 true,
+	"registry.k8s.io":             true,
+	"k8s.gcr.io":                  true,
+	"quay.io":                     true,
+	"ghcr.io":                     true,
+	"mcr.microsoft.com":           true,
+	"docker.io":                   true,
+	"public.ecr.aws":              true,
+	"gallery.ecr.aws":             true,
+}
+
+func computeImageSupplyChain(inv *inventory.ClusterInventory) inventory.ImageSupplyChain {
+	chain := inventory.ImageSupplyChain{
+		TotalImages: len(inv.Images),
+	}
+
+	registryCount := make(map[string]int)
+
+	for _, img := range inv.Images {
+		registryCount[img.Registry]++
+
+		if img.Digest != "" {
+			chain.ImagesWithDigest++
+		} else {
+			chain.ImagesWithoutDigest++
+		}
+
+		if img.Tag == "latest" {
+			chain.LatestTagImages++
+		}
+
+		if trustedRegistries[img.Registry] {
+			chain.TrustedRegistries++
+		} else {
+			chain.UntrustedRegistries++
+		}
+
+		var riskFactors []string
+		if img.Digest == "" {
+			riskFactors = append(riskFactors, "noDigest")
+		}
+		if img.Tag == "latest" {
+			riskFactors = append(riskFactors, "latestTag")
+		}
+		if !trustedRegistries[img.Registry] {
+			riskFactors = append(riskFactors, "untrustedRegistry")
+		}
+
+		if len(riskFactors) >= 2 {
+			chain.RiskyImages = append(chain.RiskyImages, inventory.ImageRiskInfo{
+				Image:       img.Image,
+				Registry:    img.Registry,
+				RiskFactors: riskFactors,
+				PodCount:    img.PodCount,
+			})
+		}
+	}
+
+	for registry, count := range registryCount {
+		trustLevel := "untrusted"
+		if trustedRegistries[registry] {
+			trustLevel = "trusted"
+		}
+		chain.RegistryBreakdown = append(chain.RegistryBreakdown, inventory.RegistryStats{
+			Registry:   registry,
+			ImageCount: count,
+			TrustLevel: trustLevel,
+		})
+	}
+
+	sort.Slice(chain.RegistryBreakdown, func(i, j int) bool {
+		return chain.RegistryBreakdown[i].ImageCount > chain.RegistryBreakdown[j].ImageCount
+	})
+
+	return chain
+}
+
+func computeSecretsExposure(inv *inventory.ClusterInventory) inventory.SecretsExposure {
+	exposure := inventory.SecretsExposure{
+		TotalSecrets:  len(inv.Secrets),
+		SecretsByType: make(map[string]int),
+	}
+
+	secretUsage := make(map[string][]string)
+
+	for _, secret := range inv.Secrets {
+		exposure.SecretsByType[secret.Type]++
+
+		if secret.Type == "kubernetes.io/dockerconfigjson" || secret.Type == "kubernetes.io/dockercfg" {
+			continue
+		}
+
+		for _, label := range []string{"sealedsecrets.bitnami.com/sealed-secrets-key"} {
+			if _, ok := secret.Labels[label]; ok {
+				exposure.SealedSecrets++
+			}
+		}
+
+		if _, ok := secret.Labels["externalsecrets.kubernetes-client.io/owned-by"]; ok {
+			exposure.ExternalSecretsManaged++
+		}
+	}
+
+	for _, pod := range inv.Workloads.Pods {
+		if isSystemNamespace(pod.Namespace) {
+			continue
+		}
+
+		for _, vol := range pod.Volumes {
+			if vol.Type == "secret" {
+				key := pod.Namespace + "/" + vol.Source
+				secretUsage[key] = append(secretUsage[key], pod.Name)
+				exposure.SecretsAsMounts++
+			}
+		}
+	}
+
+	usedSecrets := make(map[string]bool)
+	for key := range secretUsage {
+		usedSecrets[key] = true
+	}
+
+	for _, secret := range inv.Secrets {
+		if isSystemNamespace(secret.Namespace) {
+			continue
+		}
+		key := secret.Namespace + "/" + secret.Name
+		if !usedSecrets[key] {
+			if secret.Type != "kubernetes.io/service-account-token" {
+				exposure.OrphanedSecrets++
+			}
+		}
+	}
+
+	return exposure
+}
+
+func computeAdmissionGaps(inv *inventory.ClusterInventory) inventory.AdmissionControlGaps {
+	gaps := inventory.AdmissionControlGaps{}
+
+	if len(inv.Webhooks.ValidatingWebhooks) > 0 {
+		gaps.HasValidatingWebhooks = true
+	}
+	if len(inv.Webhooks.MutatingWebhooks) > 0 {
+		gaps.HasMutatingWebhooks = true
+	}
+
+	exemptedNS := make(map[string]bool)
+
+	for _, vwh := range inv.Webhooks.ValidatingWebhooks {
+		for _, wh := range vwh.Webhooks {
+			coverage := inventory.WebhookCoverageInfo{
+				Name:          wh.Name,
+				Type:          "validating",
+				FailurePolicy: wh.FailurePolicy,
+				Covers:        wh.Rules,
+			}
+
+			if wh.FailurePolicy == "Ignore" {
+				gaps.FailOpenWebhooks++
+			}
+
+			if wh.NamespaceSelector != "" && strings.Contains(wh.NamespaceSelector, "exclude") {
+				exemptedNS["detected-exemptions"] = true
+			}
+
+			gaps.WebhookCoverage = append(gaps.WebhookCoverage, coverage)
+		}
+	}
+
+	for _, mwh := range inv.Webhooks.MutatingWebhooks {
+		for _, wh := range mwh.Webhooks {
+			coverage := inventory.WebhookCoverageInfo{
+				Name:          wh.Name,
+				Type:          "mutating",
+				FailurePolicy: wh.FailurePolicy,
+				Covers:        wh.Rules,
+			}
+
+			if wh.FailurePolicy == "Ignore" {
+				gaps.FailOpenWebhooks++
+			}
+
+			gaps.WebhookCoverage = append(gaps.WebhookCoverage, coverage)
+		}
+	}
+
+	for ns := range exemptedNS {
+		gaps.ExemptedNamespaces = append(gaps.ExemptedNamespaces, ns)
+	}
+
+	if !gaps.HasValidatingWebhooks {
+		gaps.CriticalGaps = append(gaps.CriticalGaps, "No validating admission webhooks")
+		gaps.RecommendedWebhooks = append(gaps.RecommendedWebhooks, "Pod Security Admission", "OPA Gatekeeper", "Kyverno")
+	}
+
+	if gaps.FailOpenWebhooks > 0 {
+		gaps.CriticalGaps = append(gaps.CriticalGaps, fmt.Sprintf("%d webhooks have fail-open policy", gaps.FailOpenWebhooks))
+	}
+
+	return gaps
+}
+
+func computeLateralMovement(inv *inventory.ClusterInventory) inventory.LateralMovement {
+	lateral := inventory.LateralMovement{}
+
+	nsPolicies := make(map[string]bool)
+	nsDefaultDeny := make(map[string]bool)
+	for _, np := range inv.NetworkPolicies {
+		nsPolicies[np.Namespace] = true
+		if len(np.PodSelector) == 0 && (np.IngressRules == 0 || np.EgressRules == 0) {
+			nsDefaultDeny[np.Namespace] = true
+		}
+	}
+
+	userNS := 0
+	protectedNS := 0
+	for _, ns := range inv.Namespaces {
+		if !isSystemNamespace(ns.Name) {
+			userNS++
+			if nsDefaultDeny[ns.Name] {
+				protectedNS++
+			}
+		}
+	}
+
+	if userNS > 0 {
+		coverage := float64(protectedNS) / float64(userNS) * 100
+		if coverage >= 80 {
+			lateral.NetworkSegmentation = "strong"
+		} else if coverage >= 50 {
+			lateral.NetworkSegmentation = "partial"
+		} else if coverage > 0 {
+			lateral.NetworkSegmentation = "weak"
+		} else {
+			lateral.NetworkSegmentation = "none"
+		}
+	} else {
+		lateral.NetworkSegmentation = "n/a"
+	}
+
+	for _, sa := range inv.ServiceAccounts {
+		if sa.AutomountServiceAccountToken == nil || *sa.AutomountServiceAccountToken {
+			lateral.SATokenExposure++
+		}
+	}
+
+	saExecAccess := make(map[string]bool)
+	for _, crb := range inv.RBAC.ClusterRoleBindings {
+		for _, subject := range crb.Subjects {
+			if subject.Kind == "ServiceAccount" {
+				saExecAccess[subject.Namespace+"/"+subject.Name] = true
+			}
+		}
+	}
+
+	for _, pod := range inv.Workloads.Pods {
+		if isSystemNamespace(pod.Namespace) {
+			continue
+		}
+		saKey := pod.Namespace + "/" + pod.ServiceAccount
+		if saExecAccess[saKey] {
+			lateral.PodsWithExecAccess++
+		}
+	}
+
+	for _, rb := range inv.RBAC.RoleBindings {
+		for _, subject := range rb.Subjects {
+			if subject.Kind == "ServiceAccount" && subject.Namespace != "" && subject.Namespace != rb.Namespace {
+				lateral.CrossNamespacePaths++
+				lateral.HighRiskPaths = append(lateral.HighRiskPaths, inventory.LateralMovementPath{
+					Source:       subject.Namespace + "/" + subject.Name,
+					Target:       rb.Namespace,
+					AccessMethod: "RoleBinding",
+					RiskLevel:    "high",
+				})
+			}
+		}
+	}
+
+	riskScore := 0
+	if lateral.NetworkSegmentation == "none" {
+		riskScore += 30
+		lateral.Recommendations = append(lateral.Recommendations, "Implement network policies with default-deny")
+	} else if lateral.NetworkSegmentation == "weak" {
+		riskScore += 15
+		lateral.Recommendations = append(lateral.Recommendations, "Expand network policy coverage")
+	}
+
+	if lateral.SATokenExposure > 10 {
+		riskScore += 20
+		lateral.Recommendations = append(lateral.Recommendations, "Disable automountServiceAccountToken where not needed")
+	}
+
+	if lateral.CrossNamespacePaths > 0 {
+		riskScore += 15
+		lateral.Recommendations = append(lateral.Recommendations, "Review cross-namespace RBAC bindings")
+	}
+
+	if riskScore >= 40 {
+		lateral.RiskScore = "critical"
+	} else if riskScore >= 25 {
+		lateral.RiskScore = "high"
+	} else if riskScore >= 10 {
+		lateral.RiskScore = "medium"
+	} else {
+		lateral.RiskScore = "low"
+	}
+
+	return lateral
+}
+
+func computeDeprecatedAPIs(inv *inventory.ClusterInventory) inventory.DeprecatedAPIs {
+	deprecated := inventory.DeprecatedAPIs{}
+
+	for _, ing := range inv.Ingresses {
+		if ing.IngressClass == "" {
+			deprecated.WarningCount++
+			deprecated.TotalDeprecated++
+			deprecated.DeprecatedResources = append(deprecated.DeprecatedResources, inventory.DeprecatedResource{
+				Kind:           "Ingress",
+				Name:           ing.Name,
+				Namespace:      ing.Namespace,
+				CurrentAPI:     "networking.k8s.io/v1",
+				ReplacementAPI: "networking.k8s.io/v1 with ingressClassName",
+				RemovedIn:      "n/a",
+				Severity:       "warning",
+			})
+		}
+	}
+
+	for _, crd := range inv.CRDs {
+		hasV1Beta1 := false
+		for _, v := range crd.Versions {
+			if strings.Contains(v, "v1beta1") || strings.Contains(v, "v1alpha1") {
+				hasV1Beta1 = true
+				break
+			}
+		}
+		if hasV1Beta1 {
+			deprecated.WarningCount++
+			deprecated.TotalDeprecated++
+		}
+	}
+
+	return deprecated
 }

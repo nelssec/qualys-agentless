@@ -5,30 +5,34 @@ import (
 )
 
 type ClusterInventory struct {
-	Cluster         ClusterMetadata       `json:"cluster"`
-	CollectedAt     time.Time             `json:"collectedAt"`
-	Namespaces      []NamespaceInfo       `json:"namespaces"`
-	Nodes           []NodeInfo            `json:"nodes"`
-	Images          []ImageInfo           `json:"images"`
-	AIWorkloads     AIWorkloads           `json:"aiWorkloads"`
-	Workloads       WorkloadInventory     `json:"workloads"`
-	RBAC            RBACInventory         `json:"rbac"`
-	NetworkPolicies []NetworkPolicyInfo   `json:"networkPolicies"`
-	ServiceAccounts []ServiceAccountInfo  `json:"serviceAccounts"`
-	ConfigMaps      []ConfigMapInfo       `json:"configMaps"`
-	Secrets         []SecretInfo          `json:"secrets"`
-	Services        []ServiceInfo         `json:"services"`
-	Ingresses       []IngressInfo         `json:"ingresses"`
-	Events          []EventInfo           `json:"events"`
-	ResourceQuotas  []ResourceQuotaInfo   `json:"resourceQuotas"`
-	LimitRanges     []LimitRangeInfo      `json:"limitRanges"`
-	PDBs            []PDBInfo             `json:"podDisruptionBudgets"`
-	HPAs            []HPAInfo             `json:"horizontalPodAutoscalers"`
-	Storage         StorageInventory      `json:"storage"`
-	Webhooks        WebhookInventory      `json:"webhooks"`
-	CRDs            []CRDInfo             `json:"customResourceDefinitions"`
-	PriorityClasses []PriorityClassInfo   `json:"priorityClasses"`
-	Endpoints       []EndpointInfo        `json:"endpoints"`
+	Cluster             ClusterMetadata       `json:"cluster"`
+	CollectedAt         time.Time             `json:"collectedAt"`
+	SecurityPosture     SecurityPosture       `json:"securityPosture"`
+	RBACRisk            RBACRiskAnalysis      `json:"rbacRisk"`
+	AttackSurface       AttackSurface         `json:"attackSurface"`
+	NamespaceCompliance NamespaceCompliance   `json:"namespaceCompliance"`
+	WorkloadRisk        WorkloadRiskRanking   `json:"workloadRisk"`
+	ImageSupplyChain    ImageSupplyChain      `json:"imageSupplyChain"`
+	SecretsExposure     SecretsExposure       `json:"secretsExposure"`
+	AdmissionGaps       AdmissionControlGaps  `json:"admissionControlGaps"`
+	LateralMovement     LateralMovement       `json:"lateralMovement"`
+	DeprecatedAPIs      DeprecatedAPIs        `json:"deprecatedApis"`
+	Namespaces          []NamespaceInfo       `json:"namespaces"`
+	Nodes               []NodeInfo            `json:"nodes"`
+	Images              []ImageInfo           `json:"images"`
+	AIWorkloads         AIWorkloads           `json:"aiWorkloads"`
+	Workloads           WorkloadInventory     `json:"workloads"`
+	RBAC                RBACInventory         `json:"rbac"`
+	NetworkPolicies     []NetworkPolicyInfo   `json:"networkPolicies"`
+	ServiceAccounts     []ServiceAccountInfo  `json:"serviceAccounts"`
+	ConfigMaps          []ConfigMapInfo       `json:"configMaps"`
+	Secrets             []SecretInfo          `json:"secrets"`
+	Services            []ServiceInfo         `json:"services"`
+	Ingresses           []IngressInfo         `json:"ingresses"`
+	ResourceQuotas      []ResourceQuotaInfo   `json:"resourceQuotas"`
+	LimitRanges         []LimitRangeInfo      `json:"limitRanges"`
+	Webhooks            WebhookInventory      `json:"webhooks"`
+	CRDs                []CRDInfo             `json:"customResourceDefinitions"`
 }
 
 type ImageInfo struct {
@@ -59,6 +63,212 @@ type AIWorkloadSummary struct {
 	VectorDBsFound     []string `json:"vectorDbsFound,omitempty"`
 	MLPlatformsFound   []string `json:"mlPlatformsFound,omitempty"`
 	HasAIWorkloads     bool     `json:"hasAiWorkloads"`
+}
+
+type SecurityPosture struct {
+	PrivilegedWorkloads              int      `json:"privilegedWorkloads"`
+	WorkloadsRunningAsRoot           int      `json:"workloadsRunningAsRoot"`
+	WorkloadsAllowingPrivEscalation  int      `json:"workloadsAllowingPrivilegeEscalation"`
+	WorkloadsWithHostNamespace       int      `json:"workloadsWithHostNamespace"`
+	WorkloadsWithoutSecurityContext  int      `json:"workloadsWithoutSecurityContext"`
+	WorkloadsWithoutResourceLimits   int      `json:"workloadsWithoutResourceLimits"`
+	NamespacesWithoutNetworkPolicies int      `json:"namespacesWithoutNetworkPolicies"`
+	ExternallyExposedServices        int      `json:"externallyExposedServices"`
+	ImagesWithoutDigest              int      `json:"imagesWithoutDigest"`
+	ImagesUsingLatestTag             int      `json:"imagesUsingLatestTag"`
+	OverpermissiveRBAC               int      `json:"overpermissiveRbac"`
+	ServiceAccountsWithAutoMount     int      `json:"serviceAccountsWithAutoMount"`
+	CronJobsEnabled                  int      `json:"cronJobsEnabled"`
+	HostPathVolumes                  int      `json:"hostPathVolumes"`
+	DangerousCapabilities            []string `json:"dangerousCapabilities,omitempty"`
+	RiskScore                        string   `json:"riskScore"`
+}
+
+type RBACRiskAnalysis struct {
+	RiskScore                 string              `json:"riskScore"`
+	ClusterAdminBindings      int                 `json:"clusterAdminBindings"`
+	WildcardRoles             int                 `json:"wildcardRoles"`
+	SecretsAccessRoles        int                 `json:"secretsAccessRoles"`
+	EscalationCapableRoles    int                 `json:"escalationCapableRoles"`
+	ExecCapableRoles          int                 `json:"execCapableRoles"`
+	DefaultSAWithPermissions  int                 `json:"defaultServiceAccountsWithPermissions"`
+	CrossNamespaceBindings    int                 `json:"crossNamespaceBindings"`
+	UnauthenticatedAccess     bool                `json:"unauthenticatedAccess"`
+	AuthenticatedGroupAccess  bool                `json:"authenticatedGroupAccess"`
+	HighRiskBindings          []RBACRiskBinding   `json:"highRiskBindings,omitempty"`
+	PrivilegedServiceAccounts []string            `json:"privilegedServiceAccounts,omitempty"`
+}
+
+type RBACRiskBinding struct {
+	Name       string   `json:"name"`
+	Kind       string   `json:"kind"`
+	RoleRef    string   `json:"roleRef"`
+	Subjects   []string `json:"subjects"`
+	RiskReason string   `json:"riskReason"`
+}
+
+type AttackSurface struct {
+	ExternalEntryPoints    int                 `json:"externalEntryPoints"`
+	LoadBalancers          []ExposedService    `json:"loadBalancers,omitempty"`
+	NodePorts              []ExposedService    `json:"nodePorts,omitempty"`
+	Ingresses              []ExposedIngress    `json:"ingresses,omitempty"`
+	ExternalIPs            []ExposedService    `json:"externalIPs,omitempty"`
+	HostNetworkPods        int                 `json:"hostNetworkPods"`
+	HostPortPods           int                 `json:"hostPortPods"`
+	UnprotectedNamespaces  []string            `json:"unprotectedNamespaces,omitempty"`
+	InternetFacingServices int                 `json:"internetFacingServices"`
+}
+
+type ExposedService struct {
+	Name      string  `json:"name"`
+	Namespace string  `json:"namespace"`
+	Type      string  `json:"type"`
+	Ports     []int32 `json:"ports"`
+}
+
+type ExposedIngress struct {
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace"`
+	Hosts     []string `json:"hosts"`
+	TLS       bool     `json:"tls"`
+	Paths     int      `json:"paths"`
+}
+
+type NamespaceCompliance struct {
+	TotalNamespaces     int                          `json:"totalNamespaces"`
+	CompliantNamespaces int                          `json:"compliantNamespaces"`
+	ComplianceScore     float64                      `json:"complianceScore"`
+	NamespaceDetails    []NamespaceComplianceDetail  `json:"namespaceDetails,omitempty"`
+}
+
+type NamespaceComplianceDetail struct {
+	Name                  string `json:"name"`
+	HasPSALabels          bool   `json:"hasPsaLabels"`
+	PSAEnforceLevel       string `json:"psaEnforceLevel,omitempty"`
+	HasNetworkPolicies    bool   `json:"hasNetworkPolicies"`
+	HasDefaultDeny        bool   `json:"hasDefaultDeny"`
+	HasResourceQuota      bool   `json:"hasResourceQuota"`
+	HasLimitRange         bool   `json:"hasLimitRange"`
+	ServiceAccountCount   int    `json:"serviceAccountCount"`
+	DefaultSAHasSecrets   bool   `json:"defaultServiceAccountHasSecrets"`
+	ComplianceScore       int    `json:"complianceScore"`
+	Issues                []string `json:"issues,omitempty"`
+}
+
+type WorkloadRiskRanking struct {
+	HighRiskCount    int                 `json:"highRiskCount"`
+	MediumRiskCount  int                 `json:"mediumRiskCount"`
+	LowRiskCount     int                 `json:"lowRiskCount"`
+	TopRiskyWorkloads []WorkloadRiskInfo `json:"topRiskyWorkloads,omitempty"`
+}
+
+type WorkloadRiskInfo struct {
+	Name            string   `json:"name"`
+	Namespace       string   `json:"namespace"`
+	Kind            string   `json:"kind"`
+	RiskScore       int      `json:"riskScore"`
+	RiskLevel       string   `json:"riskLevel"`
+	RiskFactors     []string `json:"riskFactors"`
+	ServiceAccount  string   `json:"serviceAccount,omitempty"`
+	HasSecretAccess bool     `json:"hasSecretAccess"`
+	HasNetworkAccess bool    `json:"hasNetworkAccess"`
+}
+
+type ImageSupplyChain struct {
+	TotalImages          int                  `json:"totalImages"`
+	TrustedRegistries    int                  `json:"trustedRegistries"`
+	UntrustedRegistries  int                  `json:"untrustedRegistries"`
+	ImagesWithDigest     int                  `json:"imagesWithDigest"`
+	ImagesWithoutDigest  int                  `json:"imagesWithoutDigest"`
+	LatestTagImages      int                  `json:"latestTagImages"`
+	RegistryBreakdown    []RegistryStats      `json:"registryBreakdown,omitempty"`
+	RiskyImages          []ImageRiskInfo      `json:"riskyImages,omitempty"`
+}
+
+type RegistryStats struct {
+	Registry    string `json:"registry"`
+	ImageCount  int    `json:"imageCount"`
+	TrustLevel  string `json:"trustLevel"`
+}
+
+type ImageRiskInfo struct {
+	Image       string   `json:"image"`
+	Registry    string   `json:"registry"`
+	RiskFactors []string `json:"riskFactors"`
+	PodCount    int      `json:"podCount"`
+}
+
+type SecretsExposure struct {
+	TotalSecrets           int                   `json:"totalSecrets"`
+	SecretsInEnvVars       int                   `json:"secretsInEnvVars"`
+	SecretsAsMounts        int                   `json:"secretsAsMounts"`
+	OrphanedSecrets        int                   `json:"orphanedSecrets"`
+	CrossNamespaceAccess   int                   `json:"crossNamespaceAccess"`
+	ExternalSecretsManaged int                   `json:"externalSecretsManaged"`
+	SealedSecrets          int                   `json:"sealedSecrets"`
+	SecretsByType          map[string]int        `json:"secretsByType"`
+	ExposedSecrets         []SecretExposureInfo  `json:"exposedSecrets,omitempty"`
+}
+
+type SecretExposureInfo struct {
+	Name           string   `json:"name"`
+	Namespace      string   `json:"namespace"`
+	Type           string   `json:"type"`
+	ExposureMethod string   `json:"exposureMethod"`
+	UsedByPods     []string `json:"usedByPods,omitempty"`
+	RiskLevel      string   `json:"riskLevel"`
+}
+
+type AdmissionControlGaps struct {
+	HasValidatingWebhooks   bool                    `json:"hasValidatingWebhooks"`
+	HasMutatingWebhooks     bool                    `json:"hasMutatingWebhooks"`
+	FailOpenWebhooks        int                     `json:"failOpenWebhooks"`
+	ExemptedNamespaces      []string                `json:"exemptedNamespaces,omitempty"`
+	CriticalGaps            []string                `json:"criticalGaps,omitempty"`
+	WebhookCoverage         []WebhookCoverageInfo   `json:"webhookCoverage,omitempty"`
+	RecommendedWebhooks     []string                `json:"recommendedWebhooks,omitempty"`
+}
+
+type WebhookCoverageInfo struct {
+	Name           string   `json:"name"`
+	Type           string   `json:"type"`
+	FailurePolicy  string   `json:"failurePolicy"`
+	Covers         []string `json:"covers,omitempty"`
+	ExcludedNS     []string `json:"excludedNamespaces,omitempty"`
+}
+
+type LateralMovement struct {
+	RiskScore              string                  `json:"riskScore"`
+	NetworkSegmentation    string                  `json:"networkSegmentation"`
+	SATokenExposure        int                     `json:"serviceAccountTokenExposure"`
+	PodsWithExecAccess     int                     `json:"podsWithExecAccess"`
+	CrossNamespacePaths    int                     `json:"crossNamespacePaths"`
+	HighRiskPaths          []LateralMovementPath   `json:"highRiskPaths,omitempty"`
+	Recommendations        []string                `json:"recommendations,omitempty"`
+}
+
+type LateralMovementPath struct {
+	Source          string `json:"source"`
+	Target          string `json:"target"`
+	AccessMethod    string `json:"accessMethod"`
+	RiskLevel       string `json:"riskLevel"`
+}
+
+type DeprecatedAPIs struct {
+	TotalDeprecated    int                     `json:"totalDeprecated"`
+	CriticalCount      int                     `json:"criticalCount"`
+	WarningCount       int                     `json:"warningCount"`
+	DeprecatedResources []DeprecatedResource   `json:"deprecatedResources,omitempty"`
+}
+
+type DeprecatedResource struct {
+	Kind            string `json:"kind"`
+	Name            string `json:"name"`
+	Namespace       string `json:"namespace,omitempty"`
+	CurrentAPI      string `json:"currentApi"`
+	ReplacementAPI  string `json:"replacementApi"`
+	RemovedIn       string `json:"removedIn"`
+	Severity        string `json:"severity"`
 }
 
 type GPUWorkload struct {
@@ -437,19 +647,6 @@ type NodeCondition struct {
 	Message string `json:"message,omitempty"`
 }
 
-type EventInfo struct {
-	Name           string    `json:"name"`
-	Namespace      string    `json:"namespace"`
-	Type           string    `json:"type"`
-	Reason         string    `json:"reason"`
-	Message        string    `json:"message"`
-	Count          int32     `json:"count"`
-	FirstTimestamp time.Time `json:"firstTimestamp"`
-	LastTimestamp  time.Time `json:"lastTimestamp"`
-	Source         string    `json:"source"`
-	InvolvedObject string    `json:"involvedObject"`
-}
-
 type ResourceQuotaInfo struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
@@ -471,82 +668,6 @@ type LimitRangeItem struct {
 	Min            map[string]string `json:"min,omitempty"`
 	Default        map[string]string `json:"default,omitempty"`
 	DefaultRequest map[string]string `json:"defaultRequest,omitempty"`
-}
-
-type PDBInfo struct {
-	Name               string            `json:"name"`
-	Namespace          string            `json:"namespace"`
-	Labels             map[string]string `json:"labels,omitempty"`
-	MinAvailable       string            `json:"minAvailable,omitempty"`
-	MaxUnavailable     string            `json:"maxUnavailable,omitempty"`
-	CurrentHealthy     int32             `json:"currentHealthy"`
-	DesiredHealthy     int32             `json:"desiredHealthy"`
-	DisruptionsAllowed int32             `json:"disruptionsAllowed"`
-	ExpectedPods       int32             `json:"expectedPods"`
-}
-
-type HPAInfo struct {
-	Name            string            `json:"name"`
-	Namespace       string            `json:"namespace"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	ScaleTargetRef  string            `json:"scaleTargetRef"`
-	MinReplicas     *int32            `json:"minReplicas,omitempty"`
-	MaxReplicas     int32             `json:"maxReplicas"`
-	CurrentReplicas int32             `json:"currentReplicas"`
-	DesiredReplicas int32             `json:"desiredReplicas"`
-	Metrics         []HPAMetric       `json:"metrics,omitempty"`
-}
-
-type HPAMetric struct {
-	Type         string `json:"type"`
-	Name         string `json:"name,omitempty"`
-	TargetType   string `json:"targetType"`
-	TargetValue  string `json:"targetValue"`
-	CurrentValue string `json:"currentValue,omitempty"`
-}
-
-type StorageInventory struct {
-	PersistentVolumes      []PersistentVolumeInfo      `json:"persistentVolumes"`
-	PersistentVolumeClaims []PersistentVolumeClaimInfo `json:"persistentVolumeClaims"`
-	StorageClasses         []StorageClassInfo          `json:"storageClasses"`
-}
-
-type PersistentVolumeInfo struct {
-	Name                 string            `json:"name"`
-	Labels               map[string]string `json:"labels,omitempty"`
-	Capacity             string            `json:"capacity"`
-	AccessModes          []string          `json:"accessModes"`
-	ReclaimPolicy        string            `json:"reclaimPolicy"`
-	StorageClass         string            `json:"storageClass,omitempty"`
-	VolumeMode           string            `json:"volumeMode"`
-	Status               string            `json:"status"`
-	ClaimRef             string            `json:"claimRef,omitempty"`
-	VolumeType           string            `json:"volumeType"`
-	MountOptions         []string          `json:"mountOptions,omitempty"`
-}
-
-type PersistentVolumeClaimInfo struct {
-	Name             string            `json:"name"`
-	Namespace        string            `json:"namespace"`
-	Labels           map[string]string `json:"labels,omitempty"`
-	StorageClass     string            `json:"storageClass,omitempty"`
-	AccessModes      []string          `json:"accessModes"`
-	RequestedStorage string            `json:"requestedStorage"`
-	ActualStorage    string            `json:"actualStorage,omitempty"`
-	VolumeMode       string            `json:"volumeMode"`
-	VolumeName       string            `json:"volumeName,omitempty"`
-	Status           string            `json:"status"`
-}
-
-type StorageClassInfo struct {
-	Name                 string            `json:"name"`
-	Labels               map[string]string `json:"labels,omitempty"`
-	Provisioner          string            `json:"provisioner"`
-	ReclaimPolicy        string            `json:"reclaimPolicy,omitempty"`
-	VolumeBindingMode    string            `json:"volumeBindingMode,omitempty"`
-	AllowVolumeExpansion bool              `json:"allowVolumeExpansion"`
-	IsDefault            bool              `json:"isDefault"`
-	Parameters           map[string]string `json:"parameters,omitempty"`
 }
 
 type WebhookInventory struct {
@@ -584,26 +705,4 @@ type CRDInfo struct {
 type CRDCondition struct {
 	Type   string `json:"type"`
 	Status string `json:"status"`
-}
-
-type PriorityClassInfo struct {
-	Name            string            `json:"name"`
-	Labels          map[string]string `json:"labels,omitempty"`
-	Value           int32             `json:"value"`
-	GlobalDefault   bool              `json:"globalDefault"`
-	PreemptionPolicy string           `json:"preemptionPolicy,omitempty"`
-	Description     string            `json:"description,omitempty"`
-}
-
-type EndpointInfo struct {
-	Name      string            `json:"name"`
-	Namespace string            `json:"namespace"`
-	Labels    map[string]string `json:"labels,omitempty"`
-	Subsets   []EndpointSubset  `json:"subsets,omitempty"`
-}
-
-type EndpointSubset struct {
-	Addresses         int      `json:"addresses"`
-	NotReadyAddresses int      `json:"notReadyAddresses"`
-	Ports             []string `json:"ports,omitempty"`
 }

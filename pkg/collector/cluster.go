@@ -5,62 +5,8 @@ import (
 	"fmt"
 
 	"github.com/nelssec/qualys-agentless/pkg/inventory"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 )
-
-type ClusterResourceCollector struct {
-	crds            []inventory.CRDInfo
-	priorityClasses []inventory.PriorityClassInfo
-}
-
-func NewClusterResourceCollector() *ClusterResourceCollector {
-	return &ClusterResourceCollector{}
-}
-
-func (c *ClusterResourceCollector) Name() string {
-	return "clusterresource"
-}
-
-func (c *ClusterResourceCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
-	pcs, err := clientset.SchedulingV1().PriorityClasses().List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return err
-	}
-
-	c.priorityClasses = make([]inventory.PriorityClassInfo, 0, len(pcs.Items))
-	for _, pc := range pcs.Items {
-		var preemptionPolicy string
-		if pc.PreemptionPolicy != nil {
-			preemptionPolicy = string(*pc.PreemptionPolicy)
-		}
-
-		c.priorityClasses = append(c.priorityClasses, inventory.PriorityClassInfo{
-			Name:             pc.Name,
-			Labels:           pc.Labels,
-			Value:            pc.Value,
-			GlobalDefault:    pc.GlobalDefault,
-			PreemptionPolicy: preemptionPolicy,
-			Description:      pc.Description,
-		})
-	}
-
-	return nil
-}
-
-func (c *ClusterResourceCollector) Results() interface{} {
-	return struct {
-		CRDs            []inventory.CRDInfo
-		PriorityClasses []inventory.PriorityClassInfo
-	}{
-		CRDs:            c.crds,
-		PriorityClasses: c.priorityClasses,
-	}
-}
-
-func (c *ClusterResourceCollector) PriorityClasses() []inventory.PriorityClassInfo {
-	return c.priorityClasses
-}
 
 type CRDCollector struct {
 	results []inventory.CRDInfo
