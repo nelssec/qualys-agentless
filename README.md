@@ -30,6 +30,12 @@ chmod +x qualys-k8s
 # Scan live cluster
 qualys-k8s scan
 qualys-k8s scan --output json --output-file results.json
+qualys-k8s scan --include-inventory --output json   # Include full inventory in output
+
+# Export cluster inventory
+qualys-k8s inventory
+qualys-k8s inventory --provider aws --cluster my-cluster --region us-west-2
+qualys-k8s inventory --provider azure --subscription XXX --cluster rg/cluster
 
 # Scan YAML manifests (shift-left)
 qualys-k8s scan-manifest deployment.yaml
@@ -78,6 +84,7 @@ qualys-k8s scan-manifest ./manifests --output junit # JUnit for CI test reportin
 | Cluster | Version, API endpoint, node count |
 | Nodes | Labels, taints, conditions, capacity |
 | Workloads | Pods, Deployments, DaemonSets, StatefulSets, Jobs, CronJobs |
+| Images | Container images with registry, tag, usage count |
 | RBAC | Roles, ClusterRoles, RoleBindings, ClusterRoleBindings |
 | Network | Services, Ingresses, NetworkPolicies, Endpoints |
 | Identity | ServiceAccounts |
@@ -90,6 +97,23 @@ qualys-k8s scan-manifest ./manifests --output junit # JUnit for CI test reportin
 | Extensions | CRDs, PriorityClasses |
 
 Secret values and ConfigMap values are never collected.
+
+## AI Workload Detection
+
+Automatically detects AI/ML workloads in your cluster:
+
+| Category | Detected |
+|----------|----------|
+| GPU | NVIDIA, AMD, Intel, Habana Gaudi, AWS Neuron, Google TPU |
+| ML Frameworks | TensorFlow, PyTorch, Hugging Face, JAX, ONNX, scikit-learn |
+| LLM Inference | Ollama, vLLM, TGI, Triton, LocalAI, llama.cpp, TensorRT-LLM |
+| Vector DBs | Milvus, Weaviate, Qdrant, Chroma, Pinecone, pgvector |
+| ML Platforms | Kubeflow, MLflow, Ray, Seldon, BentoML, Airflow, Argo |
+
+The `aiWorkloads` section in inventory output provides:
+- Summary with `hasAiWorkloads` boolean for quick checks
+- GPU workloads with resource requests and node assignments
+- Detected frameworks, inference servers, and databases by pod
 
 ## Frameworks
 

@@ -92,6 +92,24 @@ qualys-k8s scan-manifest ./manifests --compliance-threshold 80
 qualys-k8s scan-helm ./chart --severity-threshold high --output junit
 ```
 
+## Inventory Export
+
+Export full cluster inventory as JSON:
+
+```bash
+# Local cluster
+qualys-k8s inventory
+
+# Cloud providers
+qualys-k8s inventory --provider aws --cluster my-cluster --region us-west-2
+qualys-k8s inventory --provider azure --subscription XXX --cluster rg/cluster
+
+# Include inventory with compliance scan
+qualys-k8s scan --include-inventory --output json
+```
+
+Inventory includes images, AI workloads, RBAC, network policies, and all Kubernetes resources.
+
 ## Authentication
 
 All authentication uses short-lived tokens.
@@ -171,6 +189,49 @@ Uses OAuth2 tokens from Application Default Credentials or Workload Identity Fed
 | NetworkPolicies | Pod logs |
 | ServiceAccounts | Pod exec |
 | Secret metadata | Environment values |
+| Container images | |
+| AI/ML workloads | |
+
+### Container Images
+
+All container images are extracted with:
+- Registry and repository
+- Tag or digest
+- Pod count and namespaces where used
+
+### AI Workload Detection
+
+Automatic detection of AI/ML infrastructure:
+
+```mermaid
+flowchart TB
+    subgraph Detection
+        GPU[GPU Resources]
+        IMG[Image Patterns]
+    end
+
+    subgraph Detected
+        NVIDIA[NVIDIA/AMD/Intel GPU]
+        ML[TensorFlow/PyTorch]
+        LLM[Ollama/vLLM/TGI]
+        VDB[Milvus/Qdrant/Chroma]
+        PLAT[Kubeflow/MLflow/Ray]
+    end
+
+    GPU --> NVIDIA
+    IMG --> ML
+    IMG --> LLM
+    IMG --> VDB
+    IMG --> PLAT
+```
+
+| Category | Examples |
+|----------|----------|
+| GPU | nvidia.com/gpu, amd.com/gpu, habana.ai/gaudi |
+| ML Frameworks | TensorFlow, PyTorch, Hugging Face, JAX |
+| LLM Servers | Ollama, vLLM, TGI, Triton, LocalAI |
+| Vector DBs | Milvus, Weaviate, Qdrant, Chroma |
+| ML Platforms | Kubeflow, MLflow, Ray, Seldon |
 
 ## Compliance Evaluation
 
