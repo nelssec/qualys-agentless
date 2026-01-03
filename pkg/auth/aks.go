@@ -4,7 +4,6 @@ package auth
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azidentity"
@@ -228,10 +227,6 @@ func containsString(slice []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func decodeBase64(s string) ([]byte, error) {
-	return base64.StdEncoding.DecodeString(s)
 }
 
 func init() {

@@ -187,7 +187,7 @@ func runScan(opts scanOptions) error {
 
 	case "azure":
 		if !auth.HasCloudProvider("azure") {
-			return fmt.Errorf("Azure provider not available (built without Azure support)")
+			return fmt.Errorf("azure provider not available (built without Azure support)")
 		}
 		if opts.cluster == "" {
 			return fmt.Errorf("--cluster is required for Azure provider")
@@ -587,7 +587,7 @@ func newInventoryCmd() *cobra.Command {
 
 			case "azure":
 				if !auth.HasCloudProvider("azure") {
-					return fmt.Errorf("Azure provider not available (built without Azure support)")
+					return fmt.Errorf("azure provider not available (built without Azure support)")
 				}
 				if cluster == "" {
 					return fmt.Errorf("--cluster is required for Azure provider")
@@ -816,7 +816,7 @@ func newFrameworksCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			engine := compliance.NewEngine()
 			engine.RegisterDefaultControls()
-			engine.LoadEmbeddedPolicies(policies.Policies, ".")
+			_ = engine.LoadEmbeddedPolicies(policies.Policies, ".")
 
 			fmt.Println("Available frameworks:")
 			fmt.Println()
@@ -862,7 +862,7 @@ func newControlsCmd() *cobra.Command {
 		Run: func(cmd *cobra.Command, args []string) {
 			engine := compliance.NewEngine()
 			engine.RegisterDefaultControls()
-			engine.LoadEmbeddedPolicies(policies.Policies, ".")
+			_ = engine.LoadEmbeddedPolicies(policies.Policies, ".")
 
 			controls := engine.ListControls(framework)
 			if len(controls) == 0 {
@@ -946,7 +946,7 @@ func newGraphCmd() *cobra.Command {
 
 			case "azure":
 				if !auth.HasCloudProvider("azure") {
-					return fmt.Errorf("Azure provider not available")
+					return fmt.Errorf("azure provider not available")
 				}
 				if cluster == "" {
 					return fmt.Errorf("--cluster required for Azure")
@@ -1109,7 +1109,7 @@ func outputGraph(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, clusterN
 			return outputSingleFormat(g, analysis, graphType, formatList[0], outputPath)
 		} else {
 			outputDir = outputPath
-			os.MkdirAll(outputDir, 0755)
+			_ = os.MkdirAll(outputDir, 0750)
 		}
 	}
 
@@ -1480,7 +1480,7 @@ References:
 
 			case "azure":
 				if !auth.HasCloudProvider("azure") {
-					return fmt.Errorf("Azure provider not available")
+					return fmt.Errorf("azure provider not available")
 				}
 				if cluster == "" {
 					return fmt.Errorf("--cluster required for Azure")
@@ -1572,7 +1572,7 @@ References:
 				generator.SetMode(netpol.ModeStrict)
 				fmt.Println("\n  WARNING: Strict mode generates default-deny policies.")
 				fmt.Println("  These WILL break connectivity if applied without proper allow rules.")
-				fmt.Println("  Test in a non-production environment first.\n")
+				fmt.Println("  Test in a non-production environment first.")
 			default:
 				return fmt.Errorf("unknown mode: %s (use baseline or strict)", mode)
 			}

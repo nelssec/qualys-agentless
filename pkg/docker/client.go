@@ -27,12 +27,6 @@ func WithHost(host string) ClientOption {
 	}
 }
 
-func WithAPIVersion(version string) ClientOption {
-	return func(c *Client) {
-		c.apiVersion = version
-	}
-}
-
 func NewClient(opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		apiVersion: "v1.43",
@@ -529,7 +523,7 @@ func (c *Client) get(ctx context.Context, path string) (*http.Response, error) {
 
 	if resp.StatusCode >= 400 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("docker API error %d: %s", resp.StatusCode, string(body))
 	}
 

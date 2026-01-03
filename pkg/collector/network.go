@@ -65,23 +65,3 @@ func (c *NetworkPolicyCollector) Collect(ctx context.Context, clientset *kuberne
 func (c *NetworkPolicyCollector) Results() interface{} {
 	return c.results
 }
-
-func HasDefaultDenyPolicy(policies []inventory.NetworkPolicyInfo, namespace string) bool {
-	for _, np := range policies {
-		if np.Namespace != namespace {
-			continue
-		}
-
-		if len(np.PodSelector) == 0 {
-			for _, pt := range np.PolicyTypes {
-				if pt == "Ingress" && np.IngressRules == 0 {
-					return true
-				}
-				if pt == "Egress" && np.EgressRules == 0 {
-					return true
-				}
-			}
-		}
-	}
-	return false
-}

@@ -28,14 +28,6 @@ func NewConfigCollector(include, exclude []string) *ConfigCollector {
 	}
 }
 
-func NewConfigCollectorWithOptions(include, exclude []string, collectSecretKeys bool) *ConfigCollector {
-	return &ConfigCollector{
-		include:         include,
-		exclude:         exclude,
-		collectSecretKeys: collectSecretKeys,
-	}
-}
-
 func (c *ConfigCollector) Name() string {
 	return "config"
 }

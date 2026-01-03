@@ -561,7 +561,7 @@ func detectGPUUsage(pod inventory.PodInfo) (hasGPU bool, gpuType string, request
 
 func parseResourceQuantity(val string) int {
 	var count int
-	fmt.Sscanf(val, "%d", &count)
+	_, _ = fmt.Sscanf(val, "%d", &count)
 	return count
 }
 

@@ -14,16 +14,6 @@ type Formatter interface {
 	Format([]*compliance.ScanResult) ([]byte, error)
 }
 
-type JSONFormatter struct{}
-
-func NewJSONFormatter() *JSONFormatter {
-	return &JSONFormatter{}
-}
-
-func (f *JSONFormatter) Format(results []*compliance.ScanResult) ([]byte, error) {
-	return json.MarshalIndent(results, "", "  ")
-}
-
 type ConsoleFormatter struct{}
 
 func NewConsoleFormatter() *ConsoleFormatter {

@@ -131,12 +131,6 @@ func WithTimeout(timeout time.Duration) ClientOption {
 	}
 }
 
-func WithHTTPClient(client *http.Client) ClientOption {
-	return func(c *Client) {
-		c.httpClient = client
-	}
-}
-
 func (c *Client) request(ctx context.Context, method, path string, body interface{}, result interface{}) error {
 	url := fmt.Sprintf("%s/csapi/%s%s", c.baseURL, APIVersion, path)
 

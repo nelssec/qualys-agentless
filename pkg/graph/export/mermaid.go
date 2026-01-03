@@ -227,19 +227,19 @@ func (e *MermaidExporter) generateStyles() string {
 	}
 
 	if len(criticalNodes) > 0 {
-		b.WriteString(fmt.Sprintf("  classDef critical fill:#ff0000,stroke:#000,stroke-width:2px,color:#fff\n"))
+		b.WriteString("  classDef critical fill:#ff0000,stroke:#000,stroke-width:2px,color:#fff\n")
 		b.WriteString(fmt.Sprintf("  class %s critical\n", strings.Join(criticalNodes, ",")))
 	}
 	if len(highNodes) > 0 {
-		b.WriteString(fmt.Sprintf("  classDef high fill:#ff6600,stroke:#000,stroke-width:2px\n"))
+		b.WriteString("  classDef high fill:#ff6600,stroke:#000,stroke-width:2px\n")
 		b.WriteString(fmt.Sprintf("  class %s high\n", strings.Join(highNodes, ",")))
 	}
 	if len(mediumNodes) > 0 {
-		b.WriteString(fmt.Sprintf("  classDef medium fill:#ffcc00,stroke:#000\n"))
+		b.WriteString("  classDef medium fill:#ffcc00,stroke:#000\n")
 		b.WriteString(fmt.Sprintf("  class %s medium\n", strings.Join(mediumNodes, ",")))
 	}
 	if len(lowNodes) > 0 {
-		b.WriteString(fmt.Sprintf("  classDef low fill:#99ff99,stroke:#000\n"))
+		b.WriteString("  classDef low fill:#99ff99,stroke:#000\n")
 		b.WriteString(fmt.Sprintf("  class %s low\n", strings.Join(lowNodes, ",")))
 	}
 
