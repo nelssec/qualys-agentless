@@ -13,6 +13,7 @@ import (
 	"github.com/nelssec/qualys-agentless/pkg/auth"
 	"github.com/nelssec/qualys-agentless/pkg/collector"
 	"github.com/nelssec/qualys-agentless/pkg/compliance"
+	"github.com/nelssec/qualys-agentless/pkg/docker"
 	"github.com/nelssec/qualys-agentless/pkg/compliance/policies"
 	"github.com/nelssec/qualys-agentless/pkg/config"
 	"github.com/nelssec/qualys-agentless/pkg/daemon"
@@ -22,6 +23,7 @@ import (
 	"github.com/nelssec/qualys-agentless/pkg/helm"
 	"github.com/nelssec/qualys-agentless/pkg/inventory"
 	"github.com/nelssec/qualys-agentless/pkg/manifest"
+	"github.com/nelssec/qualys-agentless/pkg/netpol"
 	"github.com/nelssec/qualys-agentless/pkg/output"
 	"github.com/spf13/cobra"
 	"k8s.io/client-go/rest"
@@ -47,6 +49,8 @@ func main() {
 	rootCmd.AddCommand(newDaemonCmd())
 	rootCmd.AddCommand(newFrameworksCmd())
 	rootCmd.AddCommand(newControlsCmd())
+	rootCmd.AddCommand(newDockerCmd())
+	rootCmd.AddCommand(newNetpolCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -1200,6 +1204,453 @@ func outputSingleFormat(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, g
 		return err
 	}
 	fmt.Printf("  Written: %s\n", file)
+
+	return nil
+}
+
+func newDockerCmd() *cobra.Command {
+	var (
+		host          string
+		outputFormat  string
+		outputFile    string
+		inventoryOnly bool
+		graphOutput   bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "docker",
+		Short: "Scan Docker/Podman containers for security issues",
+		Long:  "Connect to Docker or Podman daemon and scan containers, images, networks, and volumes for security misconfigurations based on CIS Docker Benchmark",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigChan
+				fmt.Println("\nReceived interrupt, shutting down...")
+				cancel()
+			}()
+
+			var opts []docker.ClientOption
+			if host != "" {
+				opts = append(opts, docker.WithHost(host))
+			}
+
+			scanner, err := docker.NewScanner(opts...)
+			if err != nil {
+				return fmt.Errorf("failed to connect to Docker: %w", err)
+			}
+
+			fmt.Println("Scanning Docker/Podman environment...")
+
+			result, err := scanner.Scan(ctx)
+			if err != nil {
+				return err
+			}
+
+			fmt.Printf("  Host: %s (%s %s)\n", result.Inventory.Host.Hostname, result.Inventory.Host.Runtime, result.Inventory.Host.RuntimeVersion)
+			fmt.Printf("  Containers: %d running, %d total\n", result.Summary.RunningContainers, result.Summary.TotalContainers)
+			fmt.Printf("  Images: %d\n", result.Summary.TotalImages)
+			fmt.Printf("  Findings: %d\n", result.Summary.TotalFindings)
+
+			if inventoryOnly {
+				return outputDockerResult(result.Inventory, outputFormat, outputFile, false, nil)
+			}
+
+			if graphOutput || strings.Contains(outputFormat, "topology") || strings.Contains(outputFormat, "graph") {
+				fmt.Println("  Building attack path graph...")
+				graphBuilder := docker.NewGraphBuilder(result.Inventory)
+				g := graphBuilder.Build()
+				fmt.Printf("  Graph: %d nodes, %d edges, %d escape vectors\n",
+					len(g.Nodes), len(g.Edges), g.Summary.ContainerEscapes)
+
+				return outputDockerResult(result, outputFormat, outputFile, true, g)
+			}
+
+			return outputDockerResult(result, outputFormat, outputFile, false, nil)
+		},
+	}
+
+	cmd.Flags().StringVar(&host, "host", "", "Docker/Podman socket (default: auto-detect)")
+	cmd.Flags().StringVar(&outputFormat, "output", "console", "Output format: console, json, topology, graph")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
+	cmd.Flags().BoolVar(&inventoryOnly, "inventory-only", false, "Only collect inventory, skip security checks")
+	cmd.Flags().BoolVar(&graphOutput, "graph", false, "Generate attack path visualization")
+
+	return cmd
+}
+
+func outputDockerResult(result interface{}, format, file string, hasGraph bool, g *graph.SecurityGraph) error {
+	formatList := strings.Split(format, ",")
+	for i := range formatList {
+		formatList[i] = strings.TrimSpace(formatList[i])
+	}
+
+	scanResult, isScanResult := result.(*docker.ScanResult)
+	hostName := "docker-host"
+	if isScanResult && scanResult.Inventory != nil {
+		hostName = scanResult.Inventory.Host.Hostname
+	}
+
+	safeHostName := strings.ReplaceAll(hostName, "/", "-")
+	safeHostName = strings.ReplaceAll(safeHostName, ":", "-")
+
+	for _, fmt := range formatList {
+		switch fmt {
+		case "json":
+			var data []byte
+			var err error
+			if hasGraph && g != nil {
+				fullOutput := struct {
+					Scan  interface{}          `json:"scan"`
+					Graph *graph.SecurityGraph `json:"graph"`
+				}{Scan: result, Graph: g}
+				data, err = json.MarshalIndent(fullOutput, "", "  ")
+			} else {
+				data, err = json.MarshalIndent(result, "", "  ")
+			}
+			if err != nil {
+				return err
+			}
+			outFile := file
+			if outFile == "" && len(formatList) > 1 {
+				outFile = "qualys-docker-" + safeHostName + ".json"
+			}
+			if outFile != "" {
+				if err := os.WriteFile(outFile, data, 0600); err != nil {
+					return err
+				}
+				printfSafe("  Written: %s\n", outFile)
+			} else {
+				printfSafe("%s\n", string(data))
+			}
+
+		case "topology", "graph":
+			if g == nil {
+				return fmtErrorf("graph not available for topology output")
+			}
+			exporter := export.NewTopologyExporter(g)
+			remLookup := compliance.GetDefaultRemediationLookup()
+			remInfo := make(map[string]*export.RemediationInfo)
+			for pattern, ctrl := range remLookup {
+				remInfo[pattern] = &export.RemediationInfo{
+					ID:          ctrl.ID,
+					Name:        ctrl.Name,
+					Severity:    ctrl.Severity,
+					Section:     ctrl.Section,
+					Remediation: ctrl.Remediation,
+					Framework:   ctrl.Framework,
+				}
+			}
+			exporter.SetRemediation(remInfo)
+			data := []byte(exporter.ExportHTML())
+			outFile := file
+			if outFile == "" {
+				outFile = "qualys-docker-" + safeHostName + ".html"
+			}
+			if err := os.WriteFile(outFile, data, 0600); err != nil {
+				return err
+			}
+			printfSafe("  Written: %s\n", outFile)
+			absPath, _ := os.Getwd()
+			if !strings.HasPrefix(outFile, "/") {
+				outFile = absPath + "/" + outFile
+			}
+			printfSafe("Open in browser: file://%s\n", outFile)
+
+		case "console":
+			if !isScanResult {
+				data, _ := json.MarshalIndent(result, "", "  ")
+				printfSafe("%s\n", string(data))
+				return nil
+			}
+
+			if len(scanResult.Findings) == 0 {
+				printfSafe("\nNo security issues found.\n")
+				return nil
+			}
+
+			printfSafe("\nFindings by Severity:\n")
+			for sev, count := range scanResult.Summary.BySeverity {
+				printfSafe("  %s: %d\n", sev, count)
+			}
+
+			if hasGraph && g != nil {
+				printfSafe("\nAttack Surface:\n")
+				printfSafe("  External exposures: %d\n", g.Summary.ExternalExposures)
+				printfSafe("  Container escapes: %d\n", g.Summary.ContainerEscapes)
+				printfSafe("  Data exfiltration risks: %d\n", g.Summary.DataExfiltrationRisks)
+			}
+
+			printfSafe("\nFindings:\n")
+			for _, f := range scanResult.Findings {
+				printfSafe("\n[%s] %s - %s\n", f.Severity, f.ID, f.Name)
+				printfSafe("   Resource: %s (%s)\n", f.Resource, f.ResourceID)
+				printfSafe("   %s\n", f.Message)
+				printfSafe("   Fix: %s\n", f.Remediation)
+			}
+
+		default:
+			return fmtErrorf("unknown output format: %s", fmt)
+		}
+	}
+
+	return nil
+}
+
+func printfSafe(format string, args ...interface{}) {
+	fmt.Printf(format, args...)
+}
+
+func fmtErrorf(format string, args ...interface{}) error {
+	return fmt.Errorf(format, args...)
+}
+
+func newNetpolCmd() *cobra.Command {
+	var (
+		kubeconfig   string
+		provider     string
+		region       string
+		cluster      string
+		subscription string
+		project      string
+		outputFormat string
+		outputFile   string
+		namespaces   []string
+		excludeNS    []string
+		mode         string
+		analyzeOnly  bool
+	)
+
+	cmd := &cobra.Command{
+		Use:   "netpol",
+		Short: "Generate NetworkPolicy recommendations",
+		Long: `Analyze cluster workloads and generate NetworkPolicy YAML recommendations.
+
+IMPORTANT: NetworkPolicies require a CNI that supports them (Calico, Cilium, Weave).
+Flannel does NOT support NetworkPolicies - they will have no effect.
+
+Modes:
+  baseline - Safe policies: DNS egress, service-specific ingress (default)
+  strict   - Zero-trust: default-deny + explicit allow rules (use with caution)
+
+Best Practices:
+  1. Always test policies in a non-production environment first
+  2. Apply DNS egress policies before deny-all policies
+  3. Monitor for connectivity issues after applying policies
+  4. Use --analyze to understand your cluster before generating policies
+
+References:
+  - Kubernetes Network Policy Recipes: github.com/ahmetb/kubernetes-network-policy-recipes
+  - Network Policy Editor: editor.networkpolicy.io`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+
+			sigChan := make(chan os.Signal, 1)
+			signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-sigChan
+				fmt.Println("\nReceived interrupt, shutting down...")
+				cancel()
+			}()
+
+			var restConfig *rest.Config
+			var clusterName string
+
+			switch provider {
+			case "aws":
+				if !auth.HasCloudProvider("aws") {
+					return fmt.Errorf("AWS provider not available")
+				}
+				if cluster == "" || region == "" {
+					return fmt.Errorf("--cluster and --region required for AWS")
+				}
+				p, err := auth.NewEKSProvider(ctx, auth.EKSProviderOptions{Region: region})
+				if err != nil {
+					return err
+				}
+				restConfig, err = p.GetRestConfig(ctx, cluster)
+				if err != nil {
+					return err
+				}
+				clusterName = cluster
+
+			case "azure":
+				if !auth.HasCloudProvider("azure") {
+					return fmt.Errorf("Azure provider not available")
+				}
+				if cluster == "" {
+					return fmt.Errorf("--cluster required for Azure")
+				}
+				p, err := auth.NewAKSProvider(ctx, auth.AKSProviderOptions{SubscriptionID: subscription})
+				if err != nil {
+					return err
+				}
+				restConfig, err = p.GetRestConfig(ctx, cluster)
+				if err != nil {
+					return err
+				}
+				clusterName = cluster
+
+			case "gcp":
+				if !auth.HasCloudProvider("gcp") {
+					return fmt.Errorf("GCP provider not available")
+				}
+				if cluster == "" {
+					return fmt.Errorf("--cluster required for GCP")
+				}
+				projects := []string{}
+				if project != "" {
+					projects = []string{project}
+				}
+				p, err := auth.NewGKEProvider(ctx, auth.GKEProviderOptions{Projects: projects})
+				if err != nil {
+					return err
+				}
+				restConfig, err = p.GetRestConfig(ctx, cluster)
+				if err != nil {
+					return err
+				}
+				clusterName = cluster
+
+			default:
+				p, err := auth.NewKubeconfigProvider(kubeconfig)
+				if err != nil {
+					return err
+				}
+				if cluster != "" {
+					restConfig, err = p.GetRestConfig(ctx, cluster)
+					clusterName = cluster
+				} else {
+					restConfig, err = p.GetRestConfig(ctx, "")
+					clusterName = p.CurrentContext()
+				}
+				if err != nil {
+					return err
+				}
+			}
+
+			fmt.Printf("Analyzing cluster: %s\n", clusterName)
+
+			mgr, err := collector.NewManager(restConfig, collector.ManagerOptions{
+				Namespaces:        namespaces,
+				NamespacesExclude: excludeNS,
+				Parallel:          5,
+				Timeout:           5 * time.Minute,
+			})
+			if err != nil {
+				return err
+			}
+
+			mgr.RegisterDefaultCollectors()
+
+			fmt.Println("  Collecting cluster inventory...")
+			inv, err := mgr.Collect(ctx)
+			if err != nil {
+				return err
+			}
+			inv.Cluster.Name = clusterName
+
+			fmt.Printf("  Found: %d namespaces, %d pods, %d services, %d existing policies\n",
+				len(inv.Namespaces), len(inv.Workloads.Pods), len(inv.Services), len(inv.NetworkPolicies))
+
+			generator := netpol.NewGenerator(inv)
+
+			if analyzeOnly {
+				fmt.Println()
+				fmt.Print(generator.GetAnalysisSummary())
+				return nil
+			}
+
+			switch mode {
+			case "baseline":
+				generator.SetMode(netpol.ModeBaseline)
+			case "strict":
+				generator.SetMode(netpol.ModeStrict)
+				fmt.Println("\n  WARNING: Strict mode generates default-deny policies.")
+				fmt.Println("  These WILL break connectivity if applied without proper allow rules.")
+				fmt.Println("  Test in a non-production environment first.\n")
+			default:
+				return fmt.Errorf("unknown mode: %s (use baseline or strict)", mode)
+			}
+
+			policies := generator.Generate()
+
+			if len(policies) == 0 {
+				fmt.Println("\n  No policies to generate. Cluster may already have adequate coverage.")
+				return nil
+			}
+
+			fmt.Printf("  Generated: %d policies (mode: %s)\n\n", len(policies), mode)
+
+			return outputNetpol(policies, outputFormat, outputFile)
+		},
+	}
+
+	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file")
+	cmd.Flags().StringVar(&provider, "provider", "", "Cloud provider: aws, azure, gcp")
+	cmd.Flags().StringVar(&region, "region", "", "AWS region")
+	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster name")
+	cmd.Flags().StringVar(&subscription, "subscription", "", "Azure subscription ID")
+	cmd.Flags().StringVar(&project, "project", "", "GCP project ID")
+	cmd.Flags().StringVar(&outputFormat, "output", "yaml", "Output format: yaml, json")
+	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
+	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to analyze")
+	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public", "qualys"}, "Namespaces to exclude")
+	cmd.Flags().StringVar(&mode, "mode", "baseline", "Policy mode: baseline (safe), strict (zero-trust)")
+	cmd.Flags().BoolVar(&analyzeOnly, "analyze", false, "Only analyze, do not generate policies")
+
+	return cmd
+}
+
+func outputNetpol(policies []netpol.GeneratedPolicy, format, file string) error {
+	var output strings.Builder
+
+	switch format {
+	case "yaml":
+		for i, p := range policies {
+			if i > 0 {
+				output.WriteString("---\n")
+			}
+			output.WriteString(fmt.Sprintf("# Namespace: %s\n", p.Namespace))
+			output.WriteString(fmt.Sprintf("# Reason: %s\n", p.Reason))
+			output.WriteString(fmt.Sprintf("# Risk: %s\n", p.Risk))
+			output.WriteString(fmt.Sprintf("# Impact: %s\n", p.Impact))
+			if p.Recipe != "" {
+				output.WriteString(fmt.Sprintf("# Recipe: %s\n", p.Recipe))
+			}
+			output.WriteString(fmt.Sprintf("# Affected workloads: %s\n", strings.Join(p.Workloads, ", ")))
+			output.WriteString(p.YAML)
+		}
+
+	case "json":
+		data, err := json.MarshalIndent(policies, "", "  ")
+		if err != nil {
+			return err
+		}
+		output.Write(data)
+
+	default:
+		return fmt.Errorf("unknown output format: %s", format)
+	}
+
+	if file != "" {
+		if err := os.WriteFile(file, []byte(output.String()), 0600); err != nil {
+			return err
+		}
+		fmt.Printf("Policies written to: %s\n", file)
+	} else {
+		fmt.Print(output.String())
+	}
+
+	fmt.Println("\n# To apply these policies:")
+	fmt.Println("#   kubectl apply -f <output-file>")
+	fmt.Println("#")
+	fmt.Println("# IMPORTANT: Test in a non-production environment first.")
+	fmt.Println("# Monitor for connectivity issues after applying.")
 
 	return nil
 }
