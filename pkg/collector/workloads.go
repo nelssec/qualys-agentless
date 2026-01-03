@@ -11,14 +11,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// WorkloadCollector collects workload resources (Pods, Deployments, etc.).
 type WorkloadCollector struct {
 	include []string
 	exclude []string
 	results inventory.WorkloadInventory
 }
 
-// NewWorkloadCollector creates a new workload collector.
 func NewWorkloadCollector(include, exclude []string) *WorkloadCollector {
 	return &WorkloadCollector{
 		include: include,
@@ -26,14 +24,11 @@ func NewWorkloadCollector(include, exclude []string) *WorkloadCollector {
 	}
 }
 
-// Name returns the collector name.
 func (c *WorkloadCollector) Name() string {
 	return "workload"
 }
 
-// Collect gathers all workload resources.
 func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
-	// Collect Pods
 	pods, err := clientset.CoreV1().Pods("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -45,7 +40,6 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 		c.results.Pods = append(c.results.Pods, convertPod(&pod))
 	}
 
-	// Collect Deployments
 	deployments, err := clientset.AppsV1().Deployments("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -57,7 +51,6 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 		c.results.Deployments = append(c.results.Deployments, convertDeployment(&dep))
 	}
 
-	// Collect DaemonSets
 	daemonsets, err := clientset.AppsV1().DaemonSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -69,7 +62,6 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 		c.results.DaemonSets = append(c.results.DaemonSets, convertDaemonSet(&ds))
 	}
 
-	// Collect StatefulSets
 	statefulsets, err := clientset.AppsV1().StatefulSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -81,7 +73,6 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 		c.results.StatefulSets = append(c.results.StatefulSets, convertStatefulSet(&ss))
 	}
 
-	// Collect ReplicaSets
 	replicasets, err := clientset.AppsV1().ReplicaSets("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -93,7 +84,6 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 		c.results.ReplicaSets = append(c.results.ReplicaSets, convertReplicaSet(&rs))
 	}
 
-	// Collect Jobs
 	jobs, err := clientset.BatchV1().Jobs("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -105,7 +95,6 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 		c.results.Jobs = append(c.results.Jobs, convertJob(&job))
 	}
 
-	// Collect CronJobs
 	cronjobs, err := clientset.BatchV1().CronJobs("").List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return err
@@ -120,12 +109,10 @@ func (c *WorkloadCollector) Collect(ctx context.Context, clientset *kubernetes.C
 	return nil
 }
 
-// Results returns the collected workloads.
 func (c *WorkloadCollector) Results() interface{} {
 	return c.results
 }
 
-// convertPod converts a Kubernetes Pod to inventory format.
 func convertPod(pod *corev1.Pod) inventory.PodInfo {
 	info := inventory.PodInfo{
 		Name:             pod.Name,
@@ -160,7 +147,6 @@ func convertPod(pod *corev1.Pod) inventory.PodInfo {
 	return info
 }
 
-// convertPodSecurityContext converts pod security context.
 func convertPodSecurityContext(sc *corev1.PodSecurityContext) *inventory.PodSecurityContext {
 	if sc == nil {
 		return nil
@@ -181,7 +167,6 @@ func convertPodSecurityContext(sc *corev1.PodSecurityContext) *inventory.PodSecu
 	return psc
 }
 
-// convertContainer converts a container spec.
 func convertContainer(c *corev1.Container) inventory.ContainerInfo {
 	info := inventory.ContainerInfo{
 		Name:            c.Name,
@@ -231,7 +216,6 @@ func convertContainer(c *corev1.Container) inventory.ContainerInfo {
 	return info
 }
 
-// convertContainerSecurityContext converts container security context.
 func convertContainerSecurityContext(sc *corev1.SecurityContext) *inventory.ContainerSecurityContext {
 	if sc == nil {
 		return nil
@@ -270,7 +254,6 @@ func convertContainerSecurityContext(sc *corev1.SecurityContext) *inventory.Cont
 	return csc
 }
 
-// convertVolume converts a volume spec.
 func convertVolume(v *corev1.Volume) inventory.VolumeInfo {
 	info := inventory.VolumeInfo{
 		Name: v.Name,
@@ -302,7 +285,6 @@ func convertVolume(v *corev1.Volume) inventory.VolumeInfo {
 	return info
 }
 
-// convertDeployment converts a Deployment to inventory format.
 func convertDeployment(dep *appsv1.Deployment) inventory.DeploymentInfo {
 	info := inventory.DeploymentInfo{
 		Name:              dep.Name,
@@ -315,7 +297,6 @@ func convertDeployment(dep *appsv1.Deployment) inventory.DeploymentInfo {
 	return info
 }
 
-// convertPodTemplateSpec converts a PodTemplateSpec.
 func convertPodTemplateSpec(pts *corev1.PodTemplateSpec) inventory.PodTemplateInfo {
 	info := inventory.PodTemplateInfo{
 		Labels:           pts.Labels,
@@ -337,7 +318,6 @@ func convertPodTemplateSpec(pts *corev1.PodTemplateSpec) inventory.PodTemplateIn
 	return info
 }
 
-// convertDaemonSet converts a DaemonSet to inventory format.
 func convertDaemonSet(ds *appsv1.DaemonSet) inventory.DaemonSetInfo {
 	return inventory.DaemonSetInfo{
 		Name:          ds.Name,
@@ -349,7 +329,6 @@ func convertDaemonSet(ds *appsv1.DaemonSet) inventory.DaemonSetInfo {
 	}
 }
 
-// convertStatefulSet converts a StatefulSet to inventory format.
 func convertStatefulSet(ss *appsv1.StatefulSet) inventory.StatefulSetInfo {
 	replicas := int32(1)
 	if ss.Spec.Replicas != nil {
@@ -364,7 +343,6 @@ func convertStatefulSet(ss *appsv1.StatefulSet) inventory.StatefulSetInfo {
 	}
 }
 
-// convertReplicaSet converts a ReplicaSet to inventory format.
 func convertReplicaSet(rs *appsv1.ReplicaSet) inventory.ReplicaSetInfo {
 	replicas := int32(1)
 	if rs.Spec.Replicas != nil {
@@ -382,7 +360,6 @@ func convertReplicaSet(rs *appsv1.ReplicaSet) inventory.ReplicaSetInfo {
 	return info
 }
 
-// convertJob converts a Job to inventory format.
 func convertJob(job *batchv1.Job) inventory.JobInfo {
 	return inventory.JobInfo{
 		Name:        job.Name,
@@ -393,7 +370,6 @@ func convertJob(job *batchv1.Job) inventory.JobInfo {
 	}
 }
 
-// convertCronJob converts a CronJob to inventory format.
 func convertCronJob(cj *batchv1.CronJob) inventory.CronJobInfo {
 	suspend := false
 	if cj.Spec.Suspend != nil {

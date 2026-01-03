@@ -8,14 +8,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// NetworkPolicyCollector collects NetworkPolicy resources.
 type NetworkPolicyCollector struct {
 	include []string
 	exclude []string
 	results []inventory.NetworkPolicyInfo
 }
 
-// NewNetworkPolicyCollector creates a new network policy collector.
 func NewNetworkPolicyCollector(include, exclude []string) *NetworkPolicyCollector {
 	return &NetworkPolicyCollector{
 		include: include,
@@ -23,12 +21,10 @@ func NewNetworkPolicyCollector(include, exclude []string) *NetworkPolicyCollecto
 	}
 }
 
-// Name returns the collector name.
 func (c *NetworkPolicyCollector) Name() string {
 	return "networkpolicy"
 }
 
-// Collect gathers all NetworkPolicy resources.
 func (c *NetworkPolicyCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
 	policies, err := clientset.NetworkingV1().NetworkPolicies("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -42,13 +38,11 @@ func (c *NetworkPolicyCollector) Collect(ctx context.Context, clientset *kuberne
 			continue
 		}
 
-		// Convert policy types to strings
 		policyTypes := make([]string, len(np.Spec.PolicyTypes))
 		for i, pt := range np.Spec.PolicyTypes {
 			policyTypes[i] = string(pt)
 		}
 
-		// Convert pod selector labels
 		podSelector := make(map[string]string)
 		if np.Spec.PodSelector.MatchLabels != nil {
 			podSelector = np.Spec.PodSelector.MatchLabels
@@ -68,21 +62,17 @@ func (c *NetworkPolicyCollector) Collect(ctx context.Context, clientset *kuberne
 	return nil
 }
 
-// Results returns the collected network policies.
 func (c *NetworkPolicyCollector) Results() interface{} {
 	return c.results
 }
 
-// HasDefaultDenyPolicy checks if a namespace has a default deny network policy.
 func HasDefaultDenyPolicy(policies []inventory.NetworkPolicyInfo, namespace string) bool {
 	for _, np := range policies {
 		if np.Namespace != namespace {
 			continue
 		}
 
-		// A default deny policy has an empty pod selector and no rules
 		if len(np.PodSelector) == 0 {
-			// Check for deny-all ingress
 			for _, pt := range np.PolicyTypes {
 				if pt == "Ingress" && np.IngressRules == 0 {
 					return true

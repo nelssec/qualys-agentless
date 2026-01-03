@@ -9,14 +9,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// ServiceCollector collects Service resources.
 type ServiceCollector struct {
 	include []string
 	exclude []string
 	results []inventory.ServiceInfo
 }
 
-// NewServiceCollector creates a new service collector.
 func NewServiceCollector(include, exclude []string) *ServiceCollector {
 	return &ServiceCollector{
 		include: include,
@@ -24,12 +22,10 @@ func NewServiceCollector(include, exclude []string) *ServiceCollector {
 	}
 }
 
-// Name returns the collector name.
 func (c *ServiceCollector) Name() string {
 	return "service"
 }
 
-// Collect gathers all Service resources.
 func (c *ServiceCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
 	services, err := clientset.CoreV1().Services("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -68,19 +64,16 @@ func (c *ServiceCollector) Collect(ctx context.Context, clientset *kubernetes.Cl
 	return nil
 }
 
-// Results returns the collected services.
 func (c *ServiceCollector) Results() interface{} {
 	return c.results
 }
 
-// IngressCollector collects Ingress resources.
 type IngressCollector struct {
 	include []string
 	exclude []string
 	results []inventory.IngressInfo
 }
 
-// NewIngressCollector creates a new ingress collector.
 func NewIngressCollector(include, exclude []string) *IngressCollector {
 	return &IngressCollector{
 		include: include,
@@ -88,12 +81,10 @@ func NewIngressCollector(include, exclude []string) *IngressCollector {
 	}
 }
 
-// Name returns the collector name.
 func (c *IngressCollector) Name() string {
 	return "ingress"
 }
 
-// Collect gathers all Ingress resources.
 func (c *IngressCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
 	ingresses, err := clientset.NetworkingV1().Ingresses("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -107,7 +98,6 @@ func (c *IngressCollector) Collect(ctx context.Context, clientset *kubernetes.Cl
 			continue
 		}
 
-		// Convert TLS configuration
 		tls := make([]inventory.IngressTLS, len(ing.Spec.TLS))
 		for i, t := range ing.Spec.TLS {
 			tls[i] = inventory.IngressTLS{
@@ -116,7 +106,6 @@ func (c *IngressCollector) Collect(ctx context.Context, clientset *kubernetes.Cl
 			}
 		}
 
-		// Convert rules
 		rules := make([]inventory.IngressRule, len(ing.Spec.Rules))
 		for i, r := range ing.Spec.Rules {
 			paths := make([]inventory.IngressPath, 0)
@@ -164,7 +153,6 @@ func (c *IngressCollector) Collect(ctx context.Context, clientset *kubernetes.Cl
 	return nil
 }
 
-// Results returns the collected ingresses.
 func (c *IngressCollector) Results() interface{} {
 	return c.results
 }

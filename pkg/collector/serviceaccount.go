@@ -8,14 +8,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// ServiceAccountCollector collects ServiceAccount resources.
 type ServiceAccountCollector struct {
 	include []string
 	exclude []string
 	results []inventory.ServiceAccountInfo
 }
 
-// NewServiceAccountCollector creates a new service account collector.
 func NewServiceAccountCollector(include, exclude []string) *ServiceAccountCollector {
 	return &ServiceAccountCollector{
 		include: include,
@@ -23,12 +21,10 @@ func NewServiceAccountCollector(include, exclude []string) *ServiceAccountCollec
 	}
 }
 
-// Name returns the collector name.
 func (c *ServiceAccountCollector) Name() string {
 	return "serviceaccount"
 }
 
-// Collect gathers all ServiceAccount resources.
 func (c *ServiceAccountCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
 	serviceAccounts, err := clientset.CoreV1().ServiceAccounts("").List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -59,7 +55,6 @@ func (c *ServiceAccountCollector) Collect(ctx context.Context, clientset *kubern
 	return nil
 }
 
-// Results returns the collected service accounts.
 func (c *ServiceAccountCollector) Results() interface{} {
 	return c.results
 }

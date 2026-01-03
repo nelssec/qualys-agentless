@@ -200,6 +200,5 @@ func (p *EKSProvider) GetClusterInfo(ctx context.Context, clusterName string) (*
 }
 
 func init() {
-	// Register EKS provider availability
 	registerCloudProvider("aws")
 }

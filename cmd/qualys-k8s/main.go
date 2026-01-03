@@ -55,17 +55,14 @@ func newScanCmd() *cobra.Command {
 		kubeconfig          string
 		provider            string
 		region              string
-		allClusters         bool
 		cluster             string
 		subscription        string
 		project             string
-		qualysURL           string
 		outputFormat        string
 		outputFile          string
 		frameworks          []string
 		namespaces          []string
 		excludeNS           []string
-		configFile          string
 		complianceThreshold float64
 		severityThreshold   string
 		includeInventory    bool
@@ -79,17 +76,14 @@ func newScanCmd() *cobra.Command {
 				kubeconfig:          kubeconfig,
 				provider:            provider,
 				region:              region,
-				allClusters:         allClusters,
 				cluster:             cluster,
 				subscription:        subscription,
 				project:             project,
-				qualysURL:           qualysURL,
 				outputFormat:        outputFormat,
 				outputFile:          outputFile,
 				frameworks:          frameworks,
 				namespaces:          namespaces,
 				excludeNS:           excludeNS,
-				configFile:          configFile,
 				complianceThreshold: complianceThreshold,
 				severityThreshold:   severityThreshold,
 				includeInventory:    includeInventory,
@@ -100,17 +94,14 @@ func newScanCmd() *cobra.Command {
 	cmd.Flags().StringVar(&kubeconfig, "kubeconfig", "", "Path to kubeconfig file")
 	cmd.Flags().StringVar(&provider, "provider", "", "Cloud provider: aws, azure, gcp")
 	cmd.Flags().StringVar(&region, "region", "", "AWS region")
-	cmd.Flags().BoolVar(&allClusters, "all-clusters", false, "Scan all clusters")
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster name")
 	cmd.Flags().StringVar(&subscription, "subscription", "", "Azure subscription ID")
 	cmd.Flags().StringVar(&project, "project", "", "GCP project ID")
-	cmd.Flags().StringVar(&qualysURL, "qualys-api-url", "", "Qualys API URL")
 	cmd.Flags().StringVar(&outputFormat, "output", "console", "Output format: console, json, sarif, junit")
 	cmd.Flags().StringVar(&outputFile, "output-file", "", "Output file path")
 	cmd.Flags().StringSliceVar(&frameworks, "frameworks", []string{"cis-k8s-1.11"}, "Frameworks to evaluate")
 	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to scan")
 	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public"}, "Namespaces to exclude")
-	cmd.Flags().StringVar(&configFile, "config", "", "Config file path")
 	cmd.Flags().Float64Var(&complianceThreshold, "compliance-threshold", 0, "Minimum compliance score (0-100), exit 1 if below")
 	cmd.Flags().StringVar(&severityThreshold, "severity-threshold", "", "Fail if findings at or above severity (low, medium, high, critical)")
 	cmd.Flags().BoolVar(&includeInventory, "include-inventory", false, "Include full cluster inventory in JSON output")
@@ -122,17 +113,14 @@ type scanOptions struct {
 	kubeconfig          string
 	provider            string
 	region              string
-	allClusters         bool
 	cluster             string
 	subscription        string
 	project             string
-	qualysURL           string
 	outputFormat        string
 	outputFile          string
 	frameworks          []string
 	namespaces          []string
 	excludeNS           []string
-	configFile          string
 	complianceThreshold float64
 	severityThreshold   string
 	includeInventory    bool
@@ -356,7 +344,6 @@ func checkThresholds(results []*compliance.ScanResult, complianceThreshold float
 	return nil
 }
 
-// FullScanOutput includes both compliance results and optionally inventory
 type FullScanOutput struct {
 	Results   []*compliance.ScanResult       `json:"results"`
 	Inventory []*inventory.ClusterInventory  `json:"inventory,omitempty"`
@@ -724,13 +711,7 @@ func newInventoryCmd() *cobra.Command {
 }
 
 func marshalYAML(v interface{}) ([]byte, error) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return nil, err
-	}
-	// For simplicity, just return JSON with yaml extension hint
-	// A proper YAML library could be added if needed
-	return data, nil
+	return json.MarshalIndent(v, "", "  ")
 }
 
 func newDaemonCmd() *cobra.Command {

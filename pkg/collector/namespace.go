@@ -8,14 +8,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 )
 
-// NamespaceCollector collects namespace resources.
 type NamespaceCollector struct {
 	include []string
 	exclude []string
 	results []inventory.NamespaceInfo
 }
 
-// NewNamespaceCollector creates a new namespace collector.
 func NewNamespaceCollector(include, exclude []string) *NamespaceCollector {
 	return &NamespaceCollector{
 		include: include,
@@ -23,12 +21,10 @@ func NewNamespaceCollector(include, exclude []string) *NamespaceCollector {
 	}
 }
 
-// Name returns the collector name.
 func (c *NamespaceCollector) Name() string {
 	return "namespace"
 }
 
-// Collect gathers all namespaces.
 func (c *NamespaceCollector) Collect(ctx context.Context, clientset *kubernetes.Clientset) error {
 	namespaces, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
@@ -53,12 +49,10 @@ func (c *NamespaceCollector) Collect(ctx context.Context, clientset *kubernetes.
 	return nil
 }
 
-// Results returns the collected namespaces.
 func (c *NamespaceCollector) Results() interface{} {
 	return c.results
 }
 
-// GetNamespaceList returns the list of namespace names collected.
 func (c *NamespaceCollector) GetNamespaceList() []string {
 	names := make([]string, len(c.results))
 	for i, ns := range c.results {

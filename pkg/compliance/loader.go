@@ -13,21 +13,16 @@ import (
 	"github.com/open-policy-agent/opa/rego"
 )
 
-// ControlSource defines where controls are loaded from.
 type ControlSource string
 
 const (
-	// SourceEmbedded uses controls embedded in the binary
 	SourceEmbedded ControlSource = "embedded"
 
-	// SourceLocal uses controls from a local directory
 	SourceLocal ControlSource = "local"
 
-	// SourceKubescape fetches controls from Kubescape regolibrary
 	SourceKubescape ControlSource = "kubescape"
 )
 
-// ControlLoader loads controls from various sources.
 type ControlLoader struct {
 	source      ControlSource
 	localPath   string
@@ -35,10 +30,8 @@ type ControlLoader struct {
 	httpClient  *http.Client
 }
 
-// ControlLoaderOption configures the loader.
 type ControlLoaderOption func(*ControlLoader)
 
-// NewControlLoader creates a new control loader.
 func NewControlLoader(source ControlSource, opts ...ControlLoaderOption) *ControlLoader {
 	loader := &ControlLoader{
 		source:      source,
@@ -53,21 +46,18 @@ func NewControlLoader(source ControlSource, opts ...ControlLoaderOption) *Contro
 	return loader
 }
 
-// WithLocalPath sets the local controls directory.
 func WithLocalPath(path string) ControlLoaderOption {
 	return func(l *ControlLoader) {
 		l.localPath = path
 	}
 }
 
-// WithKubescapeURL sets a custom Kubescape regolibrary URL.
 func WithKubescapeURL(url string) ControlLoaderOption {
 	return func(l *ControlLoader) {
 		l.kubescapeURL = url
 	}
 }
 
-// LoadControls loads controls into the engine from the configured source.
 func (l *ControlLoader) LoadControls(ctx context.Context, engine *Engine, frameworks []string) error {
 	switch l.source {
 	case SourceEmbedded:
@@ -81,19 +71,16 @@ func (l *ControlLoader) LoadControls(ctx context.Context, engine *Engine, framew
 	}
 }
 
-// loadEmbeddedControls loads controls from embedded files.
 func (l *ControlLoader) loadEmbeddedControls(engine *Engine, frameworks []string) error {
 	engine.RegisterDefaultControls()
 	return nil
 }
 
-// loadLocalControls loads controls from a local directory.
 func (l *ControlLoader) loadLocalControls(engine *Engine, frameworks []string) error {
 	if l.localPath == "" {
 		return fmt.Errorf("local path not specified")
 	}
 
-	// Walk the directory and load Rego files
 	return filepath.WalkDir(l.localPath, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -113,7 +100,6 @@ func (l *ControlLoader) loadLocalControls(engine *Engine, frameworks []string) e
 			return fmt.Errorf("failed to read %s: %w", path, err)
 		}
 
-		// Parse the Rego policy and extract control metadata
 		ctrl, query, err := parseRegoControl(path, string(content))
 		if err != nil {
 			fmt.Printf("Warning: failed to parse %s: %v\n", path, err)
@@ -129,9 +115,7 @@ func (l *ControlLoader) loadLocalControls(engine *Engine, frameworks []string) e
 	})
 }
 
-// loadKubescapeControls fetches controls from Kubescape regolibrary.
 func (l *ControlLoader) loadKubescapeControls(ctx context.Context, engine *Engine, frameworks []string) error {
-	// Fetch the framework list first
 	for _, fw := range frameworks {
 		frameworkURL := fmt.Sprintf("%s/frameworks/%s.json", l.kubescapeURL, fw)
 
@@ -158,7 +142,6 @@ func (l *ControlLoader) loadKubescapeControls(ctx context.Context, engine *Engin
 			continue
 		}
 
-		// Register the framework
 		engine.RegisterFramework(&Framework{
 			ID:          kubescapeFW.Name,
 			Name:        kubescapeFW.Name,
@@ -166,7 +149,6 @@ func (l *ControlLoader) loadKubescapeControls(ctx context.Context, engine *Engin
 			ControlIDs:  kubescapeFW.ControlIDs,
 		})
 
-		// Fetch each control
 		for _, controlID := range kubescapeFW.ControlIDs {
 			if err := l.fetchKubescapeControl(ctx, engine, controlID); err != nil {
 				fmt.Printf("Warning: failed to fetch control %s: %v\n", controlID, err)
@@ -177,14 +159,12 @@ func (l *ControlLoader) loadKubescapeControls(ctx context.Context, engine *Engin
 	return nil
 }
 
-// KubescapeFramework represents a Kubescape framework definition.
 type KubescapeFramework struct {
 	Name        string   `json:"name"`
 	Description string   `json:"description"`
 	ControlIDs  []string `json:"controlIDs"`
 }
 
-// KubescapeControl represents a Kubescape control definition.
 type KubescapeControl struct {
 	ControlID   string   `json:"controlID"`
 	Name        string   `json:"name"`
@@ -194,7 +174,6 @@ type KubescapeControl struct {
 	Severity    string   `json:"baseScore,omitempty"`
 }
 
-// fetchKubescapeControl fetches a single control from Kubescape.
 func (l *ControlLoader) fetchKubescapeControl(ctx context.Context, engine *Engine, controlID string) error {
 	controlURL := fmt.Sprintf("%s/controls/%s.json", l.kubescapeURL, controlID)
 
@@ -223,7 +202,6 @@ func (l *ControlLoader) fetchKubescapeControl(ctx context.Context, engine *Engin
 		return err
 	}
 
-	// Convert severity
 	severity := SeverityMedium
 	switch strings.ToLower(ksControl.Severity) {
 	case "critical":
@@ -244,7 +222,6 @@ func (l *ControlLoader) fetchKubescapeControl(ctx context.Context, engine *Engin
 
 	engine.RegisterControl(ctrl)
 
-	// Fetch and compile the Rego rules
 	for _, ruleID := range ksControl.Rules {
 		ruleURL := fmt.Sprintf("%s/rules/%s/raw.rego", l.kubescapeURL, ruleID)
 		ruleResp, err := l.httpClient.Get(ruleURL)
@@ -262,7 +239,6 @@ func (l *ControlLoader) fetchKubescapeControl(ctx context.Context, engine *Engin
 			continue
 		}
 
-		// Compile the Rego rule
 		query, err := rego.New(
 			rego.Query("data.armo_builtins.deny"),
 			rego.Module(ruleID+".rego", string(ruleBody)),
@@ -278,9 +254,7 @@ func (l *ControlLoader) fetchKubescapeControl(ctx context.Context, engine *Engin
 	return nil
 }
 
-// parseRegoControl parses a Rego file and extracts control metadata.
 func parseRegoControl(path, content string) (*Control, *rego.PreparedEvalQuery, error) {
-	// Extract control ID from comments or package name
 	controlID := ""
 	name := ""
 	description := ""
@@ -309,13 +283,11 @@ func parseRegoControl(path, content string) (*Control, *rego.PreparedEvalQuery, 
 		return nil, nil, fmt.Errorf("no control_id found in %s", path)
 	}
 
-	// Determine the query based on package
 	query := "data.qualys.controls.deny"
 	if strings.Contains(content, "package armo_builtins") {
 		query = "data.armo_builtins.deny"
 	}
 
-	// Compile the Rego policy
 	preparedQuery, err := rego.New(
 		rego.Query(query),
 		rego.Module(path, content),

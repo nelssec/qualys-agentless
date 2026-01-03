@@ -15,14 +15,12 @@ import (
 	"github.com/open-policy-agent/opa/rego"
 )
 
-// Engine evaluates compliance policies using OPA/Rego.
 type Engine struct {
 	frameworks map[string]*Framework
 	controls   map[string]*Control
 	policies   map[string]*rego.PreparedEvalQuery
 }
 
-// Framework represents a compliance framework (CIS, NSA-CISA, MITRE, etc.).
 type Framework struct {
 	ID          string   `json:"id"`
 	Name        string   `json:"name"`
@@ -31,7 +29,6 @@ type Framework struct {
 	ControlIDs  []string `json:"controlIds"`
 }
 
-// Control represents a security control within a framework.
 type Control struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name"`
@@ -46,7 +43,6 @@ type Control struct {
 	RegoPolicy    string            `json:"-"` // The Rego policy code
 }
 
-// Severity represents the severity level of a finding.
 type Severity string
 
 const (
@@ -57,7 +53,6 @@ const (
 	SeverityInfo     Severity = "INFO"
 )
 
-// QualysMapping maps a control to Qualys KSPM.
 type QualysMapping struct {
 	QID         int    `json:"qid"`
 	Title       string `json:"title"`
@@ -65,7 +60,6 @@ type QualysMapping struct {
 	SubCategory string `json:"subCategory"`
 }
 
-// Finding represents a compliance violation or pass.
 type Finding struct {
 	ControlID   string                 `json:"controlId"`
 	ControlName string                 `json:"controlName"`
@@ -79,7 +73,6 @@ type Finding struct {
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
-// FindingStatus represents the status of a finding.
 type FindingStatus string
 
 const (
@@ -90,7 +83,6 @@ const (
 	StatusError   FindingStatus = "ERROR"
 )
 
-// ResourceRef identifies a Kubernetes resource.
 type ResourceRef struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
@@ -98,7 +90,6 @@ type ResourceRef struct {
 	APIGroup  string `json:"apiGroup,omitempty"`
 }
 
-// ScanResult contains all findings from a scan.
 type ScanResult struct {
 	ClusterName  string    `json:"clusterName"`
 	ScanTime     time.Time `json:"scanTime"`
@@ -110,7 +101,6 @@ type ScanResult struct {
 	Summary      Summary   `json:"summary"`
 }
 
-// Summary provides an overview of the scan results.
 type Summary struct {
 	BySeverity  map[Severity]int `json:"bySeverity"`
 	ByFramework map[string]int   `json:"byFramework"`
@@ -118,7 +108,6 @@ type Summary struct {
 	ComplianceScore float64       `json:"complianceScore"`
 }
 
-// NewEngine creates a new compliance engine.
 func NewEngine() *Engine {
 	return &Engine{
 		frameworks: make(map[string]*Framework),
@@ -127,7 +116,6 @@ func NewEngine() *Engine {
 	}
 }
 
-// LoadEmbeddedPolicies loads policies from embedded filesystem.
 func (e *Engine) LoadEmbeddedPolicies(fsys embed.FS, root string) error {
 	return fs.WalkDir(fsys, root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -157,7 +145,6 @@ func (e *Engine) LoadEmbeddedPolicies(fsys embed.FS, root string) error {
 	})
 }
 
-// LoadPoliciesFromDir loads policies from a directory.
 func (e *Engine) LoadPoliciesFromDir(dir string) error {
 	return filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -181,7 +168,6 @@ func (e *Engine) LoadPoliciesFromDir(dir string) error {
 	})
 }
 
-// loadRegoPolicy loads a single Rego policy.
 func (e *Engine) loadRegoPolicy(path, content string) error {
 	controlID := extractControlID(content)
 	if controlID == "" {
@@ -219,7 +205,6 @@ func extractPackageName(content string) string {
 	return ""
 }
 
-// loadFramework loads a framework definition.
 func (e *Engine) loadFramework(content []byte) error {
 	var fw Framework
 	if err := json.Unmarshal(content, &fw); err != nil {
@@ -229,28 +214,23 @@ func (e *Engine) loadFramework(content []byte) error {
 	return nil
 }
 
-// RegisterControl adds a control to the engine.
 func (e *Engine) RegisterControl(ctrl *Control) {
 	e.controls[ctrl.ID] = ctrl
 }
 
-// RegisterFramework adds a framework to the engine.
 func (e *Engine) RegisterFramework(fw *Framework) {
 	e.frameworks[fw.ID] = fw
 }
 
-// PolicyCount returns the number of loaded Rego policies.
 func (e *Engine) PolicyCount() int {
 	return len(e.policies)
 }
 
-// HasPolicy checks if a control has a Rego policy loaded.
 func (e *Engine) HasPolicy(controlID string) bool {
 	_, ok := e.policies[controlID]
 	return ok
 }
 
-// Evaluate runs all policies against the inventory.
 func (e *Engine) Evaluate(ctx context.Context, inv *inventory.ClusterInventory, frameworks []string) (*ScanResult, error) {
 	result := &ScanResult{
 		ClusterName: inv.Cluster.Name,
@@ -264,36 +244,30 @@ func (e *Engine) Evaluate(ctx context.Context, inv *inventory.ClusterInventory, 
 		},
 	}
 
-	// Convert inventory to input for OPA
 	input, err := e.buildOPAInput(inv)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build OPA input: %w", err)
 	}
 
-	// Evaluate each policy
 	for controlID, query := range e.policies {
 		ctrl, ok := e.controls[controlID]
 		if !ok {
 			continue
 		}
 
-		// Check if this control is in the requested frameworks
 		if !e.isControlInFrameworks(ctrl, frameworks) {
 			continue
 		}
 
 		result.TotalChecks++
 
-		// Evaluate the policy
 		findings, err := e.evaluateControl(ctx, query, ctrl, input)
 		if err != nil {
-			// Log error and continue
 			fmt.Printf("Warning: failed to evaluate control %s: %v\n", controlID, err)
 			result.Summary.ByStatus[StatusError]++
 			continue
 		}
 
-		// Add findings to result
 		for _, f := range findings {
 			result.Findings = append(result.Findings, f)
 			result.Summary.BySeverity[f.Severity]++
@@ -308,7 +282,6 @@ func (e *Engine) Evaluate(ctx context.Context, inv *inventory.ClusterInventory, 
 		}
 	}
 
-	// Calculate compliance score
 	if result.TotalChecks > 0 {
 		result.Summary.ComplianceScore = float64(result.PassedChecks) / float64(result.TotalChecks) * 100
 	}
@@ -316,7 +289,6 @@ func (e *Engine) Evaluate(ctx context.Context, inv *inventory.ClusterInventory, 
 	return result, nil
 }
 
-// evaluateControl runs a single control against the input.
 func (e *Engine) evaluateControl(ctx context.Context, query *rego.PreparedEvalQuery, ctrl *Control, input map[string]interface{}) ([]Finding, error) {
 	results, err := query.Eval(ctx, rego.EvalInput(input))
 	if err != nil {
@@ -326,7 +298,6 @@ func (e *Engine) evaluateControl(ctx context.Context, query *rego.PreparedEvalQu
 	findings := make([]Finding, 0)
 
 	if len(results) == 0 || len(results[0].Expressions) == 0 {
-		// No violations - pass
 		findings = append(findings, Finding{
 			ControlID:   ctrl.ID,
 			ControlName: ctrl.Name,
@@ -339,7 +310,6 @@ func (e *Engine) evaluateControl(ctx context.Context, query *rego.PreparedEvalQu
 		return findings, nil
 	}
 
-	// Process violations
 	violations, ok := results[0].Expressions[0].Value.([]interface{})
 	if !ok {
 		return findings, nil
@@ -382,9 +352,7 @@ func (e *Engine) evaluateControl(ctx context.Context, query *rego.PreparedEvalQu
 	return findings, nil
 }
 
-// buildOPAInput converts the inventory to OPA input format.
 func (e *Engine) buildOPAInput(inv *inventory.ClusterInventory) (map[string]interface{}, error) {
-	// Convert to JSON and back to get map[string]interface{}
 	data, err := json.Marshal(inv)
 	if err != nil {
 		return nil, err
@@ -398,7 +366,6 @@ func (e *Engine) buildOPAInput(inv *inventory.ClusterInventory) (map[string]inte
 	return input, nil
 }
 
-// isControlInFrameworks checks if a control belongs to any of the specified frameworks.
 func (e *Engine) isControlInFrameworks(ctrl *Control, frameworks []string) bool {
 	if len(frameworks) == 0 {
 		return true // No filter, include all
@@ -409,7 +376,6 @@ func (e *Engine) isControlInFrameworks(ctrl *Control, frameworks []string) bool 
 			return true
 		}
 
-		// Check if the control is in the framework's control list
 		if fw, ok := e.frameworks[fwID]; ok {
 			for _, cid := range fw.ControlIDs {
 				if cid == ctrl.ID {
@@ -422,7 +388,6 @@ func (e *Engine) isControlInFrameworks(ctrl *Control, frameworks []string) bool 
 	return false
 }
 
-// ListFrameworks returns all registered frameworks.
 func (e *Engine) ListFrameworks() []*Framework {
 	fws := make([]*Framework, 0, len(e.frameworks))
 	for _, fw := range e.frameworks {
@@ -431,7 +396,6 @@ func (e *Engine) ListFrameworks() []*Framework {
 	return fws
 }
 
-// ListControls returns all registered controls, optionally filtered by framework.
 func (e *Engine) ListControls(framework string) []*Control {
 	ctrls := make([]*Control, 0, len(e.controls))
 	for _, ctrl := range e.controls {
@@ -442,11 +406,8 @@ func (e *Engine) ListControls(framework string) []*Control {
 	return ctrls
 }
 
-// Helper functions
 
-// extractControlID extracts the control ID from a Rego policy.
 func extractControlID(content string) string {
-	// Look for a control_id metadata annotation or package name pattern
 	lines := strings.Split(content, "\n")
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -454,7 +415,6 @@ func extractControlID(content string) string {
 			return strings.TrimSpace(strings.TrimPrefix(line, "# control_id:"))
 		}
 		if strings.HasPrefix(line, "package ") && strings.Contains(line, "controls") {
-			// Extract from package name like "qualys.controls.cis_1_2_3"
 			parts := strings.Split(line, ".")
 			if len(parts) > 2 {
 				return strings.ReplaceAll(parts[len(parts)-1], "_", ".")
@@ -464,7 +424,6 @@ func extractControlID(content string) string {
 	return ""
 }
 
-// getString safely extracts a string from a map.
 func getString(m map[string]interface{}, key string) string {
 	if v, ok := m[key].(string); ok {
 		return v

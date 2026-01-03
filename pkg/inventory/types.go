@@ -4,12 +4,13 @@ import (
 	"time"
 )
 
-// ClusterInventory contains all collected resources from a Kubernetes cluster.
 type ClusterInventory struct {
 	Cluster         ClusterMetadata       `json:"cluster"`
 	CollectedAt     time.Time             `json:"collectedAt"`
 	Namespaces      []NamespaceInfo       `json:"namespaces"`
 	Nodes           []NodeInfo            `json:"nodes"`
+	Images          []ImageInfo           `json:"images"`
+	AIWorkloads     AIWorkloads           `json:"aiWorkloads"`
 	Workloads       WorkloadInventory     `json:"workloads"`
 	RBAC            RBACInventory         `json:"rbac"`
 	NetworkPolicies []NetworkPolicyInfo   `json:"networkPolicies"`
@@ -30,7 +31,78 @@ type ClusterInventory struct {
 	Endpoints       []EndpointInfo        `json:"endpoints"`
 }
 
-// ClusterMetadata contains information about the cluster.
+type ImageInfo struct {
+	Image      string   `json:"image"`
+	Registry   string   `json:"registry,omitempty"`
+	Repository string   `json:"repository"`
+	Tag        string   `json:"tag,omitempty"`
+	Digest     string   `json:"digest,omitempty"`
+	PodCount   int      `json:"podCount"`
+	Namespaces []string `json:"namespaces"`
+}
+
+type AIWorkloads struct {
+	Summary         AIWorkloadSummary  `json:"summary"`
+	GPUWorkloads    []GPUWorkload      `json:"gpuWorkloads,omitempty"`
+	MLFrameworks    []MLFrameworkUsage `json:"mlFrameworks,omitempty"`
+	LLMInference    []LLMInferenceInfo `json:"llmInference,omitempty"`
+	VectorDatabases []VectorDBInfo     `json:"vectorDatabases,omitempty"`
+	MLPlatforms     []MLPlatformInfo   `json:"mlPlatforms,omitempty"`
+}
+
+type AIWorkloadSummary struct {
+	TotalGPUPods       int      `json:"totalGpuPods"`
+	TotalGPURequested  int      `json:"totalGpuRequested"`
+	GPUTypes           []string `json:"gpuTypes,omitempty"`
+	MLFrameworksFound  []string `json:"mlFrameworksFound,omitempty"`
+	LLMServersFound    []string `json:"llmServersFound,omitempty"`
+	VectorDBsFound     []string `json:"vectorDbsFound,omitempty"`
+	MLPlatformsFound   []string `json:"mlPlatformsFound,omitempty"`
+	HasAIWorkloads     bool     `json:"hasAiWorkloads"`
+}
+
+type GPUWorkload struct {
+	PodName      string            `json:"podName"`
+	Namespace    string            `json:"namespace"`
+	GPUType      string            `json:"gpuType"`
+	GPURequested int               `json:"gpuRequested"`
+	GPULimit     int               `json:"gpuLimit"`
+	Images       []string          `json:"images"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	NodeName     string            `json:"nodeName,omitempty"`
+}
+
+type MLFrameworkUsage struct {
+	Framework  string   `json:"framework"`
+	Image      string   `json:"image"`
+	PodCount   int      `json:"podCount"`
+	Namespaces []string `json:"namespaces"`
+}
+
+type LLMInferenceInfo struct {
+	Type       string   `json:"type"`
+	Image      string   `json:"image"`
+	PodName    string   `json:"podName"`
+	Namespace  string   `json:"namespace"`
+	HasGPU     bool     `json:"hasGpu"`
+	ModelPath  string   `json:"modelPath,omitempty"`
+}
+
+type VectorDBInfo struct {
+	Type      string `json:"type"`
+	Image     string `json:"image"`
+	PodName   string `json:"podName"`
+	Namespace string `json:"namespace"`
+}
+
+type MLPlatformInfo struct {
+	Platform  string   `json:"platform"`
+	Component string   `json:"component,omitempty"`
+	PodName   string   `json:"podName"`
+	Namespace string   `json:"namespace"`
+	Images    []string `json:"images"`
+}
+
 type ClusterMetadata struct {
 	Name       string            `json:"name"`
 	Provider   string            `json:"provider"`
@@ -42,7 +114,6 @@ type ClusterMetadata struct {
 	APIVersion string            `json:"apiVersion"`
 }
 
-// NamespaceInfo contains namespace metadata.
 type NamespaceInfo struct {
 	Name        string            `json:"name"`
 	Labels      map[string]string `json:"labels,omitempty"`
@@ -50,7 +121,6 @@ type NamespaceInfo struct {
 	Phase       string            `json:"phase"`
 }
 
-// WorkloadInventory contains all workload resources.
 type WorkloadInventory struct {
 	Pods         []PodInfo         `json:"pods"`
 	Deployments  []DeploymentInfo  `json:"deployments"`
@@ -61,7 +131,6 @@ type WorkloadInventory struct {
 	CronJobs     []CronJobInfo     `json:"cronJobs"`
 }
 
-// PodInfo contains pod metadata and security context.
 type PodInfo struct {
 	Name           string                `json:"name"`
 	Namespace      string                `json:"namespace"`
@@ -81,7 +150,6 @@ type PodInfo struct {
 	Source         string                `json:"source,omitempty"`
 }
 
-// PodSecurityContext contains pod-level security settings.
 type PodSecurityContext struct {
 	RunAsUser          *int64  `json:"runAsUser,omitempty"`
 	RunAsGroup         *int64  `json:"runAsGroup,omitempty"`
@@ -91,7 +159,6 @@ type PodSecurityContext struct {
 	SupplementalGroups []int64 `json:"supplementalGroups,omitempty"`
 }
 
-// ContainerInfo contains container metadata and security settings.
 type ContainerInfo struct {
 	Name            string                     `json:"name"`
 	Image           string                     `json:"image"`
@@ -106,7 +173,6 @@ type ContainerInfo struct {
 	Args            []string                   `json:"args,omitempty"`
 }
 
-// ContainerSecurityContext contains container-level security settings.
 type ContainerSecurityContext struct {
 	Privileged               *bool    `json:"privileged,omitempty"`
 	RunAsUser                *int64   `json:"runAsUser,omitempty"`
@@ -119,13 +185,11 @@ type ContainerSecurityContext struct {
 	SELinuxOptions           string   `json:"seLinuxOptions,omitempty"`
 }
 
-// Capabilities represents Linux capabilities.
 type Capabilities struct {
 	Add  []string `json:"add,omitempty"`
 	Drop []string `json:"drop,omitempty"`
 }
 
-// ContainerPort represents a container port.
 type ContainerPort struct {
 	Name          string `json:"name,omitempty"`
 	ContainerPort int32  `json:"containerPort"`
@@ -133,13 +197,11 @@ type ContainerPort struct {
 	HostPort      int32  `json:"hostPort,omitempty"`
 }
 
-// ResourceRequirements represents resource requests and limits.
 type ResourceRequirements struct {
 	Requests map[string]string `json:"requests,omitempty"`
 	Limits   map[string]string `json:"limits,omitempty"`
 }
 
-// VolumeMount represents a volume mount.
 type VolumeMount struct {
 	Name      string `json:"name"`
 	MountPath string `json:"mountPath"`
@@ -147,14 +209,12 @@ type VolumeMount struct {
 	SubPath   string `json:"subPath,omitempty"`
 }
 
-// VolumeInfo represents a volume.
 type VolumeInfo struct {
 	Name   string `json:"name"`
 	Type   string `json:"type"`
 	Source string `json:"source,omitempty"`
 }
 
-// DeploymentInfo contains deployment metadata.
 type DeploymentInfo struct {
 	Name              string            `json:"name"`
 	Namespace         string            `json:"namespace"`
@@ -164,7 +224,6 @@ type DeploymentInfo struct {
 	PodTemplate       PodTemplateInfo   `json:"podTemplate"`
 }
 
-// PodTemplateInfo contains pod template spec information.
 type PodTemplateInfo struct {
 	Labels         map[string]string    `json:"labels,omitempty"`
 	ServiceAccount string               `json:"serviceAccount"`
@@ -176,7 +235,6 @@ type PodTemplateInfo struct {
 	AutomountSAToken *bool              `json:"automountServiceAccountToken,omitempty"`
 }
 
-// DaemonSetInfo contains daemonset metadata.
 type DaemonSetInfo struct {
 	Name           string          `json:"name"`
 	Namespace      string          `json:"namespace"`
@@ -186,7 +244,6 @@ type DaemonSetInfo struct {
 	PodTemplate    PodTemplateInfo `json:"podTemplate"`
 }
 
-// StatefulSetInfo contains statefulset metadata.
 type StatefulSetInfo struct {
 	Name        string          `json:"name"`
 	Namespace   string          `json:"namespace"`
@@ -195,7 +252,6 @@ type StatefulSetInfo struct {
 	PodTemplate PodTemplateInfo `json:"podTemplate"`
 }
 
-// ReplicaSetInfo contains replicaset metadata.
 type ReplicaSetInfo struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
@@ -204,7 +260,6 @@ type ReplicaSetInfo struct {
 	OwnerRef  string            `json:"ownerRef,omitempty"`
 }
 
-// JobInfo contains job metadata.
 type JobInfo struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
@@ -213,7 +268,6 @@ type JobInfo struct {
 	PodTemplate PodTemplateInfo   `json:"podTemplate"`
 }
 
-// CronJobInfo contains cronjob metadata.
 type CronJobInfo struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
@@ -223,7 +277,6 @@ type CronJobInfo struct {
 	PodTemplate PodTemplateInfo   `json:"podTemplate"`
 }
 
-// RBACInventory contains RBAC resources.
 type RBACInventory struct {
 	Roles               []RoleInfo               `json:"roles"`
 	ClusterRoles        []ClusterRoleInfo        `json:"clusterRoles"`
@@ -231,7 +284,6 @@ type RBACInventory struct {
 	ClusterRoleBindings []ClusterRoleBindingInfo `json:"clusterRoleBindings"`
 }
 
-// RoleInfo contains role metadata.
 type RoleInfo struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
@@ -239,14 +291,12 @@ type RoleInfo struct {
 	Rules     []PolicyRule      `json:"rules"`
 }
 
-// ClusterRoleInfo contains cluster role metadata.
 type ClusterRoleInfo struct {
 	Name   string            `json:"name"`
 	Labels map[string]string `json:"labels,omitempty"`
 	Rules  []PolicyRule      `json:"rules"`
 }
 
-// PolicyRule represents an RBAC policy rule.
 type PolicyRule struct {
 	Verbs           []string `json:"verbs"`
 	APIGroups       []string `json:"apiGroups"`
@@ -255,7 +305,6 @@ type PolicyRule struct {
 	NonResourceURLs []string `json:"nonResourceURLs,omitempty"`
 }
 
-// RoleBindingInfo contains role binding metadata.
 type RoleBindingInfo struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
@@ -264,7 +313,6 @@ type RoleBindingInfo struct {
 	Subjects  []Subject         `json:"subjects"`
 }
 
-// ClusterRoleBindingInfo contains cluster role binding metadata.
 type ClusterRoleBindingInfo struct {
 	Name     string            `json:"name"`
 	Labels   map[string]string `json:"labels,omitempty"`
@@ -272,20 +320,17 @@ type ClusterRoleBindingInfo struct {
 	Subjects []Subject         `json:"subjects"`
 }
 
-// RoleRef references a role.
 type RoleRef struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 }
 
-// Subject represents an RBAC subject.
 type Subject struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
 	Namespace string `json:"namespace,omitempty"`
 }
 
-// NetworkPolicyInfo contains network policy metadata.
 type NetworkPolicyInfo struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
@@ -296,7 +341,6 @@ type NetworkPolicyInfo struct {
 	EgressRules  int              `json:"egressRules"`
 }
 
-// ServiceAccountInfo contains service account metadata.
 type ServiceAccountInfo struct {
 	Name                         string            `json:"name"`
 	Namespace                    string            `json:"namespace"`
@@ -305,7 +349,6 @@ type ServiceAccountInfo struct {
 	Secrets                      []string          `json:"secrets,omitempty"`
 }
 
-// ConfigMapInfo contains configmap metadata (no data values).
 type ConfigMapInfo struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
@@ -313,7 +356,6 @@ type ConfigMapInfo struct {
 	DataKeys  []string          `json:"dataKeys"`
 }
 
-// SecretInfo contains secret metadata (no data values).
 type SecretInfo struct {
 	Name      string            `json:"name"`
 	Namespace string            `json:"namespace"`
@@ -322,7 +364,6 @@ type SecretInfo struct {
 	DataKeys  []string          `json:"dataKeys"`
 }
 
-// ServiceInfo contains service metadata.
 type ServiceInfo struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
@@ -333,7 +374,6 @@ type ServiceInfo struct {
 	Ports       []ServicePort     `json:"ports"`
 }
 
-// ServicePort represents a service port.
 type ServicePort struct {
 	Name       string `json:"name,omitempty"`
 	Port       int32  `json:"port"`
@@ -342,7 +382,6 @@ type ServicePort struct {
 	NodePort   int32  `json:"nodePort,omitempty"`
 }
 
-// IngressInfo contains ingress metadata.
 type IngressInfo struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace"`
@@ -352,26 +391,22 @@ type IngressInfo struct {
 	Rules       []IngressRule     `json:"rules"`
 }
 
-// IngressTLS contains TLS configuration.
 type IngressTLS struct {
 	Hosts      []string `json:"hosts"`
 	SecretName string   `json:"secretName"`
 }
 
-// IngressRule contains ingress rule information.
 type IngressRule struct {
 	Host  string        `json:"host,omitempty"`
 	Paths []IngressPath `json:"paths"`
 }
 
-// IngressPath contains ingress path information.
 type IngressPath struct {
 	Path     string `json:"path"`
 	PathType string `json:"pathType"`
 	Backend  string `json:"backend"`
 }
 
-// NodeInfo contains node metadata.
 type NodeInfo struct {
 	Name             string            `json:"name"`
 	Labels           map[string]string `json:"labels,omitempty"`
