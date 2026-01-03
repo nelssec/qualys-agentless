@@ -209,7 +209,6 @@ func (e *TopologyExporter) ExportHTML() string {
 	topoGraph := e.buildFlowGraph()
 	jsonData, _ := json.Marshal(topoGraph)
 
-	// Generate remediation JSON from control data
 	remediationData, _ := json.Marshal(e.remediation)
 
 	criticalCount := 0

@@ -30,7 +30,12 @@ chmod +x qualys-k8s
 # Scan live cluster
 qualys-k8s scan
 qualys-k8s scan --output json --output-file results.json
-qualys-k8s scan --include-inventory --output json   # Include full inventory in output
+qualys-k8s scan --include-inventory --output json
+
+# Attack path visualization (default: topology + JSON)
+qualys-k8s graph
+qualys-k8s graph --output /tmp
+qualys-k8s graph --format topology,json,mermaid
 
 # Export cluster inventory
 qualys-k8s inventory
@@ -58,10 +63,48 @@ qualys-k8s frameworks list
 qualys-k8s controls list --framework cis-k8s-1.11
 
 # CI/CD with thresholds
-qualys-k8s scan --compliance-threshold 80           # Fail if score < 80%
-qualys-k8s scan --severity-threshold high           # Fail if any high/critical findings
-qualys-k8s scan-manifest ./manifests --output junit # JUnit for CI test reporting
+qualys-k8s scan --compliance-threshold 80
+qualys-k8s scan --severity-threshold high
+qualys-k8s scan-manifest ./manifests --output junit
 ```
+
+## Attack Path Visualization
+
+Generate interactive security graphs showing attack paths, container escape vectors, and external exposure:
+
+```bash
+qualys-k8s graph
+```
+
+Outputs `qualys-k8s-{cluster}.html` and `qualys-k8s-{cluster}.json` to the current directory.
+
+```
+Internet → Ingress → Services → Pods → ServiceAccounts → Secrets
+                                  ↓
+                                Nodes (escape vectors)
+```
+
+**Security Analyzers:**
+
+| Analyzer | Detects |
+|----------|---------|
+| Escalation Paths | Privilege escalation via RBAC (secrets access, pod creation, impersonation) |
+| Container Escapes | hostPID, hostNetwork, privileged, docker.sock, dangerous capabilities |
+| External Exposure | Internet-facing services, ingress routes, NodePort/LoadBalancer |
+| Cloud Metadata | Pods that can reach cloud metadata endpoints (169.254.169.254) |
+
+**Interactive Features:**
+- Click resources to view labels, properties, and connections
+- Security findings show CIS control IDs with remediation guidance
+- Navigate between connected resources
+- Filter by risk level or exposure
+
+**Output Formats:**
+- `topology` - Interactive HTML with D3.js flow visualization (default)
+- `html` - Force-directed graph
+- `json` - Raw graph data with analysis results
+- `mermaid` - Mermaid diagram syntax
+- `dot` - GraphViz DOT format
 
 ## Authentication
 

@@ -1036,7 +1036,7 @@ func newGraphCmd() *cobra.Command {
 					len(analysisOutput.Exposures))
 			}
 
-			return outputGraph(g, analysisOutput, graphType, outputFormat, outputFile)
+			return outputGraph(g, analysisOutput, clusterName, graphType, outputFormat, outputFile)
 		},
 	}
 
@@ -1046,8 +1046,8 @@ func newGraphCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cluster, "cluster", "", "Cluster name")
 	cmd.Flags().StringVar(&subscription, "subscription", "", "Azure subscription ID")
 	cmd.Flags().StringVar(&project, "project", "", "GCP project ID")
-	cmd.Flags().StringVar(&outputFormat, "format", "html", "Output format: html, dot, mermaid, json")
-	cmd.Flags().StringVar(&outputFile, "output", "", "Output file path")
+	cmd.Flags().StringVar(&outputFormat, "format", "topology,json", "Output format(s): topology, html, json, dot, mermaid (comma-separated)")
+	cmd.Flags().StringVar(&outputFile, "output", "", "Output directory or file path (default: ./qualys-k8s-{cluster}.*)")
 	cmd.Flags().StringSliceVar(&namespaces, "namespaces", nil, "Namespaces to include")
 	cmd.Flags().StringSliceVar(&excludeNS, "exclude-namespaces", []string{"kube-system", "kube-public", "qualys"}, "Namespaces to exclude")
 	cmd.Flags().StringVar(&graphType, "type", "full", "Graph type: full, attack-paths, exposure")
@@ -1086,7 +1086,59 @@ type FullGraphOutput struct {
 	Analysis *GraphAnalysisOutput `json:"analysis,omitempty"`
 }
 
-func outputGraph(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, graphType, format, file string) error {
+func outputGraph(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, clusterName, graphType, formats, outputPath string) error {
+	formatList := strings.Split(formats, ",")
+	for i := range formatList {
+		formatList[i] = strings.TrimSpace(formatList[i])
+	}
+
+	safeClusterName := strings.ReplaceAll(clusterName, "/", "-")
+	safeClusterName = strings.ReplaceAll(safeClusterName, ":", "-")
+	safeClusterName = strings.ReplaceAll(safeClusterName, " ", "-")
+
+	outputDir := "."
+	if outputPath != "" {
+		info, err := os.Stat(outputPath)
+		if err == nil && info.IsDir() {
+			outputDir = outputPath
+		} else if len(formatList) == 1 {
+			return outputSingleFormat(g, analysis, graphType, formatList[0], outputPath)
+		} else {
+			outputDir = outputPath
+			os.MkdirAll(outputDir, 0755)
+		}
+	}
+
+	var htmlFile string
+	for _, format := range formatList {
+		ext := format
+		if format == "topology" {
+			ext = "html"
+		}
+		filename := fmt.Sprintf("qualys-k8s-%s.%s", safeClusterName, ext)
+		filepath := fmt.Sprintf("%s/%s", outputDir, filename)
+
+		if err := outputSingleFormat(g, analysis, graphType, format, filepath); err != nil {
+			return err
+		}
+
+		if format == "topology" || format == "html" {
+			htmlFile = filepath
+		}
+	}
+
+	if htmlFile != "" {
+		absPath, _ := os.Getwd()
+		if !strings.HasPrefix(htmlFile, "/") {
+			htmlFile = absPath + "/" + htmlFile
+		}
+		fmt.Printf("Open in browser: file://%s\n", htmlFile)
+	}
+
+	return nil
+}
+
+func outputSingleFormat(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, graphType, format, file string) error {
 	var data []byte
 	var err error
 
@@ -1121,7 +1173,6 @@ func outputGraph(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, graphTyp
 
 	case "topology":
 		exporter := export.NewTopologyExporter(g)
-		// Load remediation data from compliance controls
 		remLookup := compliance.GetDefaultRemediationLookup()
 		remInfo := make(map[string]*export.RemediationInfo)
 		for pattern, ctrl := range remLookup {
@@ -1145,17 +1196,10 @@ func outputGraph(g *graph.SecurityGraph, analysis *GraphAnalysisOutput, graphTyp
 		return err
 	}
 
-	if file != "" {
-		if err := os.WriteFile(file, data, 0600); err != nil {
-			return err
-		}
-		fmt.Printf("Graph written to: %s\n", file)
-		if format == "html" || format == "topology" {
-			fmt.Printf("Open in browser: file://%s\n", file)
-		}
-	} else {
-		fmt.Print(string(data))
+	if err := os.WriteFile(file, data, 0600); err != nil {
+		return err
 	}
+	fmt.Printf("  Written: %s\n", file)
 
 	return nil
 }

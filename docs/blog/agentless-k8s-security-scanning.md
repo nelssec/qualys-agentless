@@ -334,6 +334,92 @@ All Linux builds use UPX compression for minimal size:
 
 The minimal build works with any Kubernetes cluster. Managed K8s auth SDKs (AWS/Azure/GCP) are only for automatic credential fetching.
 
+## Attack Path Visualization
+
+Beyond compliance checks, the scanner builds a security graph showing how an attacker could move through your cluster:
+
+```bash
+qualys-k8s graph
+```
+
+Outputs `qualys-k8s-{cluster}.html` and `qualys-k8s-{cluster}.json`.
+
+```mermaid
+flowchart LR
+    subgraph External
+        INET[Internet]
+    end
+
+    subgraph Entry
+        ING[Ingress]
+        LB[LoadBalancer]
+        NP[NodePort]
+    end
+
+    subgraph Workloads
+        POD1[Pod A]
+        POD2[Pod B]
+    end
+
+    subgraph Identity
+        SA[ServiceAccount]
+    end
+
+    subgraph Targets
+        SECRET[Secrets]
+        NODE[Node]
+    end
+
+    INET --> ING
+    INET --> LB
+    INET --> NP
+    ING --> POD1
+    LB --> POD1
+    NP --> POD2
+    POD1 --> SA
+    POD2 -.->|escape| NODE
+    SA --> SECRET
+```
+
+### Security Analyzers
+
+| Analyzer | Detects |
+|----------|---------|
+| Escalation Paths | RBAC privilege escalation (secrets access, pod creation, impersonation, bind permissions) |
+| Container Escapes | hostPID, hostNetwork, privileged containers, runtime socket mounts, dangerous capabilities |
+| External Exposure | Internet-facing LoadBalancers, NodePorts, Ingress routes |
+| Cloud Metadata | Pods that can access cloud provider metadata endpoints |
+
+### Interactive Visualization
+
+The HTML output provides an interactive topology view:
+
+- Click any resource to view inventory data (labels, properties, security context)
+- Security findings display CIS control IDs with remediation steps
+- Navigate between connected resources
+- Filter by risk level (critical, high) or exposure type
+- Animated flow lines show attack paths
+
+### Example Findings
+
+When clicking on a pod with security issues:
+
+| Finding | Control | Remediation |
+|---------|---------|-------------|
+| Container runs privileged | CIS 5.2.1 | Set securityContext.privileged: false |
+| hostPID enabled | CIS 5.2.2 | Set spec.hostPID: false |
+| Mounts docker.sock | CIS 5.2.12 | Remove runtime socket volume mount |
+| NET_ADMIN capability | CIS 5.2.9 | Remove from capabilities.add |
+
+### Output Formats
+
+| Format | Use Case |
+|--------|----------|
+| topology | Interactive HTML visualization (default) |
+| json | Integration with other tools, custom analysis |
+| mermaid | Documentation, markdown embedding |
+| dot | GraphViz rendering |
+
 ## Security Controls
 
 | Control | Implementation |
